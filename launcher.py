@@ -1,3 +1,4 @@
+# THIS WAS WRITTEN BY CHATGPT, THIS IS PURE AI SLOP
 
 import hashlib
 import json
