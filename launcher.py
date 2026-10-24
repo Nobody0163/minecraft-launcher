@@ -11,6 +11,26 @@ import sys
 import threading
 import re
 import zipfile
+import importlib
+import subprocess
+import sys
+
+DEPENDENCIES = {
+	"pygame": "pygame-ce",
+	"requests": "requests"
+}
+
+for module_name, package_name in DEPENDENCIES.items():
+	try:
+		importlib.import_module(module_name)
+	except ImportError:
+		subprocess.check_call([
+			sys.executable,
+			"-m",
+			"pip",
+			"install",
+			package_name
+		])
 
 import pygame
 import requests
@@ -28,7 +48,7 @@ UPDATE_FILE: pathlib.Path = SCRIPT_PATH.with_suffix(SCRIPT_PATH.suffix + ".new")
 
 GITHUB_OWNER: str = "Nobody0163"
 GITHUB_REPOSITORY: str = "minecraft-launcher"
-LAUNCHER_VERSION: str = "1.0.1"
+LAUNCHER_VERSION: str = "1.0.2"
 GITHUB_RELEASE_API_URL: str = (
 	f"https://api.github.com/repos/{GITHUB_OWNER}/"
 	f"{GITHUB_REPOSITORY}/releases/latest"
