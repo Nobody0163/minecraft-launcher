@@ -48,7 +48,7 @@ UPDATE_FILE: pathlib.Path = SCRIPT_PATH.with_suffix(SCRIPT_PATH.suffix + ".new")
 
 GITHUB_OWNER: str = "Nobody0163"
 GITHUB_REPOSITORY: str = "minecraft-launcher"
-LAUNCHER_VERSION: str = "1.0.2"
+LAUNCHER_VERSION: str = "1.0.3"
 GITHUB_RELEASE_API_URL: str = (
 	f"https://api.github.com/repos/{GITHUB_OWNER}/"
 	f"{GITHUB_REPOSITORY}/releases/latest"
@@ -80,9 +80,11 @@ SCREEN: pygame.Surface = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Minecraft Launcher")
 
 CLOCK: pygame.time.Clock = pygame.time.Clock()
-FONT: pygame.font.Font = pygame.font.Font(None, 25)
-SMALL_FONT: pygame.font.Font = pygame.font.Font(None, 20)
-TITLE_FONT: pygame.font.Font = pygame.font.Font(None, 42)
+FONT: pygame.font.Font = pygame.font.Font("C:/Windows/Fonts/segoeui.ttf", 16)
+SMALL_FONT: pygame.font.Font = pygame.font.Font("C:/Windows/Fonts/segoeui.ttf", 13)
+MEDIUM_FONT: pygame.font.Font = pygame.font.Font("C:/Windows/Fonts/seguisb.ttf", 18)
+TITLE_FONT: pygame.font.Font = pygame.font.Font("C:/Windows/Fonts/seguisb.ttf", 30)
+BUTTON_FONT: pygame.font.Font = pygame.font.Font("C:/Windows/Fonts/seguisb.ttf", 16)
 
 MANIFEST: dict = {}
 VERSIONS: list[dict] = []
@@ -221,9 +223,12 @@ def DrawText(
 	y: int,
 	font: pygame.font.Font = FONT,
 	color: tuple[int, int, int] = TEXT,
+	align: str = "topleft",
 ) -> None:
 	surface: pygame.Surface = font.render(text, True, color)
-	SCREEN.blit(surface, (x, y))
+	rect: pygame.Rect = surface.get_rect()
+	setattr(rect, align, (x, y))
+	SCREEN.blit(surface, rect)
 
 
 def DrawButton(
@@ -241,7 +246,7 @@ def DrawButton(
 
 	pygame.draw.rect(SCREEN, color, rect, border_radius=6)
 
-	surface: pygame.Surface = FONT.render(
+	surface: pygame.Surface = BUTTON_FONT.render(
 		text,
 		True,
 		TEXT if enabled else MUTED,
@@ -807,7 +812,7 @@ def StartBackgroundTask(target, *args) -> None:
 def DrawInterface() -> None:
 	SCREEN.fill(BACKGROUND)
 
-	DrawText("Minecraft Launcher", 30, 22, TITLE_FONT)
+	DrawText("Minecraft Launcher", 30, 24, TITLE_FONT)
 	DrawText("Java Edition", 32, 66, SMALL_FONT, MUTED)
 
 	pygame.draw.rect(
@@ -817,7 +822,7 @@ def DrawInterface() -> None:
 		border_radius=8,
 	)
 
-	DrawText("Select a version", 42, 120)
+	DrawText("Select a version", 42, 119, MEDIUM_FONT)
 
 	filter_rects: dict[str, pygame.Rect] = {
 		"release": pygame.Rect(40, 155, 105, 32),
@@ -863,14 +868,15 @@ def DrawInterface() -> None:
 		elif row.collidepoint(pygame.mouse.get_pos()):
 			pygame.draw.rect(SCREEN, BUTTON, row, border_radius=4)
 
-		DrawText(version["id"], 52, y + 4, SMALL_FONT)
+		DrawText(version["id"], 52, row.centery, FONT, align="midleft")
 
 		DrawText(
-			version["type"],
-			305,
-			y + 4,
+			version["type"].replace("_", " ").title(),
+			395,
+			row.centery,
 			SMALL_FONT,
 			TEXT if version["id"] == SELECTED_VERSION else MUTED,
+			align="midright",
 		)
 
 	SCREEN.set_clip(clip_rect)
@@ -882,12 +888,12 @@ def DrawInterface() -> None:
 		border_radius=8,
 	)
 
-	DrawText("Installation", 465, 120)
+	DrawText("Installation", 465, 119, MEDIUM_FONT)
 
 	if SELECTED_VERSION:
-		DrawText(f"Selected: {SELECTED_VERSION}", 465, 165)
+		DrawText(f"Selected: {SELECTED_VERSION}", 465, 165, FONT)
 	else:
-		DrawText("Select a version from the list.", 465, 165, color=MUTED)
+		DrawText("Select a version from the list.", 465, 165, FONT, MUTED)
 
 	DrawText("Username", 465, 195, SMALL_FONT, MUTED)
 
@@ -907,7 +913,7 @@ def DrawInterface() -> None:
 
 	username_surface: pygame.Surface = FONT.render(USERNAME, True, TEXT)
 	username_area: pygame.Rect = username_surface.get_rect(
-		midleft=(USERNAME_RECT.x + 10, USERNAME_RECT.centery)
+		midleft=(USERNAME_RECT.x + 12, USERNAME_RECT.centery)
 	)
 	SCREEN.blit(username_surface, username_area)
 
@@ -918,11 +924,11 @@ def DrawInterface() -> None:
 			encoding="utf-8"
 		).strip()
 
-	DrawText("Current installation:", 465, 270, SMALL_FONT, MUTED)
-	DrawText(current_version, 465, 295)
+	DrawText("Current installation", 465, 278, SMALL_FONT, MUTED)
+	DrawText(current_version, 465, 301, MEDIUM_FONT)
 
-	install_rect: pygame.Rect = pygame.Rect(465, 335, 380, 48)
-	launch_rect: pygame.Rect = pygame.Rect(465, 395, 380, 48)
+	install_rect: pygame.Rect = pygame.Rect(465, 350, 380, 50)
+	launch_rect: pygame.Rect = pygame.Rect(465, 414, 380, 50)
 
 	DrawButton(
 		install_rect,
@@ -936,10 +942,10 @@ def DrawInterface() -> None:
 		not BUSY,
 	)
 
-	DrawText("Status", 30, 575, SMALL_FONT, MUTED)
-	DrawText(STATUS[:110], 30, 600, SMALL_FONT, STATUS_COLOR)
+	DrawText("Status", 30, 570, SMALL_FONT, MUTED)
+	DrawText(STATUS[:110], 30, 594, FONT, STATUS_COLOR)
 
-	progress_rect: pygame.Rect = pygame.Rect(465, 465, 380, 12)
+	progress_rect: pygame.Rect = pygame.Rect(465, 484, 380, 10)
 	pygame.draw.rect(SCREEN, BUTTON, progress_rect, border_radius=4)
 
 	if PROGRESS > 0:
@@ -1065,7 +1071,7 @@ def Main() -> None:
 						if 0 <= index < len(VISIBLE_VERSIONS):
 							SELECTED_VERSION = VISIBLE_VERSIONS[index]["id"]
 
-					elif pygame.Rect(465, 335, 380, 48).collidepoint(mouse_pos):
+					elif pygame.Rect(465, 350, 380, 50).collidepoint(mouse_pos):
 						if SELECTED_VERSION and not BUSY:
 							selected: dict | None = next(
 								(
@@ -1079,7 +1085,7 @@ def Main() -> None:
 							if selected is not None:
 								StartBackgroundTask(InstallVersion, selected)
 
-					elif pygame.Rect(465, 395, 380, 48).collidepoint(mouse_pos):
+					elif pygame.Rect(465, 414, 380, 50).collidepoint(mouse_pos):
 						if not BUSY:
 							StartBackgroundTask(LaunchCurrentInstall)
 
