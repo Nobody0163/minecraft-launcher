@@ -65,7 +65,7 @@ UPDATE_FILE: pathlib.Path = SCRIPT_PATH.with_suffix(SCRIPT_PATH.suffix + ".new")
 
 GITHUB_OWNER: str = "Nobody0163"
 GITHUB_REPOSITORY: str = "minecraft-launcher"
-LAUNCHER_VERSION: str = "1.0.3"
+LAUNCHER_VERSION: str = "1.1.0"
 GITHUB_RELEASE_API_URL: str = (
 	f"https://api.github.com/repos/{GITHUB_OWNER}/"
 	f"{GITHUB_REPOSITORY}/releases/latest"
@@ -112,6 +112,7 @@ USERNAME_ACTIVE: bool = False
 USERNAME_SELECT_ALL: bool = False
 USERNAME_RECT: pygame.Rect = pygame.Rect(465, 220, 380, 36)
 VERSION_FILTER: str = "release"
+INSTALL_LOADER: str = "vanilla"
 
 STATUS: str = "Loading Minecraft versions..."
 STATUS_COLOR: tuple[int, int, int] = TEXT
@@ -335,7 +336,7 @@ def DownloadFile(
 			temp_path.unlink()
 
 
-def GetJson(url: str) -> dict:
+def GetJson(url: str) -> dict | list:
 	response: requests.Response = SESSION.get(url, timeout=30)
 	response.raise_for_status()
 	return response.json()
@@ -404,6 +405,128 @@ def GetNativeClassifier(library: dict) -> str | None:
 	arch_value: str = "64" if arch == "64bit" else "32"
 
 	return native_name.replace("${arch}", arch_value)
+
+
+def GetLibraryPath(library: dict) -> pathlib.Path | None:
+	artifact: dict | None = library.get("downloads", {}).get("artifact")
+	if artifact is not None:
+		return pathlib.Path(artifact["path"])
+
+	name: str | None = library.get("name")
+	if name is None:
+		return None
+
+	coordinate, separator, extension = name.partition("@")
+	parts: list[str] = coordinate.split(":")
+	if len(parts) not in (3, 4):
+		raise ValueError(f"Invalid Maven coordinate: {name}")
+
+	group: str
+	artifact_name: str
+	version: str
+	group, artifact_name, version = parts[:3]
+	classifier: str = parts[3] if len(parts) == 4 else ""
+	file_name: str = f"{artifact_name}-{version}"
+	if classifier:
+		file_name += f"-{classifier}"
+	file_name += f".{extension if separator else 'jar'}"
+
+	return pathlib.Path(group.replace(".", "/")) / artifact_name / version / file_name
+
+
+def DownloadLibrary(library: dict) -> pathlib.Path | None:
+	if not IsRuleAllowed(library.get("rules")):
+		return None
+
+	artifact: dict | None = library.get("downloads", {}).get("artifact")
+	relative_path: pathlib.Path | None = GetLibraryPath(library)
+	if relative_path is None:
+		return None
+
+	library_path: pathlib.Path = LIBRARIES_DIR / relative_path
+
+	if artifact is not None:
+		DownloadFile(
+			artifact["url"],
+			library_path,
+			artifact.get("sha1"),
+		)
+	else:
+		name: str = library["name"]
+		repository: str = library.get("url", "https://maven.fabricmc.net/")
+		DownloadFile(
+			repository.rstrip("/") + "/" + relative_path.as_posix(),
+			library_path,
+		)
+
+	return library_path
+
+
+def InstallFabric(version: dict) -> None:
+	global BUSY
+
+	# Install the vanilla files first. Fabric's version profile inherits them.
+	InstallVersion(version)
+
+	version_id: str = version["id"]
+	version_dir: pathlib.Path = VERSIONS_DIR / version_id
+	version_json_path: pathlib.Path = version_dir / f"{version_id}.json"
+	client_path: pathlib.Path = version_dir / f"{version_id}.jar"
+	if not version_json_path.is_file() or not client_path.is_file():
+		raise RuntimeError("The vanilla Minecraft installation could not be completed.")
+
+	BUSY = True
+	try:
+		SetStatus("Fetching Fabric Loader versions...", progress=0.0)
+
+		loader_versions: list[dict] = GetJson(
+			f"https://meta.fabricmc.net/v2/versions/loader/{version_id}"
+		)
+		if not loader_versions:
+			raise RuntimeError(f"No Fabric Loader versions are available for Minecraft {version_id}.")
+
+		stable_versions: list[dict] = [
+			item for item in loader_versions
+			if item.get("loader", {}).get("stable", False)
+		]
+		loader_version: str = (
+			stable_versions[0] if stable_versions else loader_versions[0]
+		)["loader"]["version"]
+
+		SetStatus(f"Fetching Fabric {loader_version} profile...", progress=0.05)
+		profile: dict = GetJson(
+			f"https://meta.fabricmc.net/v2/versions/loader/"
+			f"{version_id}/{loader_version}/profile/json"
+		)
+
+		profile_id: str = profile["id"]
+		profile_dir: pathlib.Path = VERSIONS_DIR / profile_id
+		profile_dir.mkdir(parents=True, exist_ok=True)
+
+		libraries: list[dict] = profile.get("libraries", [])
+		total_libraries: int = max(1, len(libraries))
+
+		for index, library in enumerate(libraries):
+			SetStatus(
+				f"Downloading Fabric library {index + 1}/{total_libraries}",
+				progress=0.1 + 0.8 * (index + 1) / total_libraries,
+			)
+			DownloadLibrary(library)
+
+		profile_path: pathlib.Path = profile_dir / f"{profile_id}.json"
+		profile_path.write_text(
+			json.dumps(profile, indent=2),
+			encoding="utf-8",
+		)
+
+		CURRENT_VERSION_FILE.write_text(profile_id, encoding="utf-8")
+		SetStatus(
+			f"Installed Fabric {loader_version} for Minecraft {version_id}.",
+			ACCENT,
+			1.0,
+		)
+	finally:
+		BUSY = False
 
 
 def InstallVersion(version: dict) -> None:
@@ -657,43 +780,60 @@ def LaunchCurrentInstall() -> None:
 
 		version_dir: pathlib.Path = VERSIONS_DIR / version_id
 		version_json_path: pathlib.Path = version_dir / f"{version_id}.json"
-		client_path: pathlib.Path = version_dir / f"{version_id}.jar"
 
-		if not version_json_path.is_file() or not client_path.is_file():
+		if not version_json_path.is_file():
 			raise FileNotFoundError(
-				f"Minecraft {version_id} is incomplete. Reinstall it first."
+				f"Installation {version_id} is incomplete. Reinstall it first."
+			)
+
+		installation_json: dict = json.loads(
+			version_json_path.read_text(encoding="utf-8")
+		)
+
+		base_version_id: str = installation_json.get("inheritsFrom", version_id)
+		base_version_dir: pathlib.Path = VERSIONS_DIR / base_version_id
+		base_version_json_path: pathlib.Path = (
+			base_version_dir / f"{base_version_id}.json"
+		)
+		client_path: pathlib.Path = (
+			base_version_dir / f"{base_version_id}.jar"
+		)
+
+		if not base_version_json_path.is_file() or not client_path.is_file():
+			raise FileNotFoundError(
+				f"Minecraft {base_version_id} is incomplete. Reinstall it first."
 			)
 
 		version_json: dict = json.loads(
-			version_json_path.read_text(encoding="utf-8")
+			base_version_json_path.read_text(encoding="utf-8")
 		)
 
 		client_size: int = client_path.stat().st_size
 		if client_size == 0:
 			raise RuntimeError("The Minecraft client JAR is empty. Reinstall it.")
 
-		native_dir: pathlib.Path = NATIVES_DIR / version_id
+		native_dir: pathlib.Path = NATIVES_DIR / base_version_id
 		asset_index_id: str = version_json["assetIndex"]["id"]
 
 		classpath: list[str] = [str(client_path)]
+		all_libraries: list[dict] = [
+			*version_json.get("libraries", []),
+			*installation_json.get("libraries", []),
+		]
 
-		for library in version_json.get("libraries", []):
-			if not IsRuleAllowed(library.get("rules")):
+		for library in all_libraries:
+			library_path: pathlib.Path | None = GetLibraryPath(library)
+			if library_path is None or not IsRuleAllowed(library.get("rules")):
 				continue
 
-			artifact: dict | None = (
-				library.get("downloads", {}).get("artifact")
-			)
+			full_library_path: pathlib.Path = LIBRARIES_DIR / library_path
+			if not full_library_path.is_file():
+				raise FileNotFoundError(
+					f"Missing library: {full_library_path}. Reinstall the installation."
+				)
 
-			if artifact is None:
-				continue
-
-			library_path: pathlib.Path = (
-				LIBRARIES_DIR / pathlib.Path(artifact["path"])
-			)
-
-			if library_path.is_file():
-				classpath.append(str(library_path))
+			if str(full_library_path) not in classpath:
+				classpath.append(str(full_library_path))
 
 		classpath_argument: str = os.pathsep.join(classpath)
 
@@ -719,18 +859,20 @@ def LaunchCurrentInstall() -> None:
 			"resolution_height": "720",
 		}
 
-		arguments: dict = version_json.get("arguments", {})
+		base_arguments: dict = version_json.get("arguments", {})
+		installation_arguments: dict = installation_json.get("arguments", {})
+		jvm_arguments: list = [
+			*base_arguments.get("jvm", []),
+			*installation_arguments.get("jvm", []),
+		]
+		game_arguments: list = [
+			*base_arguments.get("game", []),
+			*installation_arguments.get("game", []),
+		]
 
-		if arguments:
-			jvm_args: list[str] = GetArgumentValues(
-				arguments.get("jvm", []),
-				variables,
-			)
-
-			game_args: list[str] = GetArgumentValues(
-				arguments.get("game", []),
-				variables,
-			)
+		if base_arguments or installation_arguments:
+			jvm_args: list[str] = GetArgumentValues(jvm_arguments, variables)
+			game_args: list[str] = GetArgumentValues(game_arguments, variables)
 
 			jvm_args = [
 				argument.replace("${classpath}", classpath_argument)
@@ -742,7 +884,6 @@ def LaunchCurrentInstall() -> None:
 				for argument in jvm_args
 			):
 				jvm_args.extend(["-cp", classpath_argument])
-
 		else:
 			jvm_args = [
 				"-Djava.library.path=" + str(native_dir),
@@ -750,35 +891,27 @@ def LaunchCurrentInstall() -> None:
 				classpath_argument,
 			]
 
-			game_args = version_json.get(
+			legacy_arguments: list[str] = version_json.get(
 				"minecraftArguments",
 				"",
 			).split()
 
-			game_args = [
-				argument.replace("${" + key + "}", value)
-				for argument in game_args
-				for key, value in variables.items()
-			] if False else [
-				argument
-				for argument in game_args
-			]
-
-			resolved_game_args: list[str] = []
-
-			for argument in game_args:
+			game_args: list[str] = []
+			for argument in legacy_arguments:
 				for key, value in variables.items():
 					argument = argument.replace("${" + key + "}", value)
+				game_args.append(argument)
 
-				resolved_game_args.append(argument)
-
-			game_args = resolved_game_args
+		main_class: str = installation_json.get(
+			"mainClass",
+			version_json["mainClass"],
+		)
 
 		command: list[str] = [
 			"java",
 			"-Djava.library.path=" + str(native_dir),
 			*jvm_args,
-			version_json["mainClass"],
+			main_class,
 			*game_args,
 		]
 
@@ -786,7 +919,7 @@ def LaunchCurrentInstall() -> None:
 
 		print("Client JAR:", client_path)
 		print("Client size:", client_size)
-		print("Main class:", version_json["mainClass"])
+		print("Main class:", main_class)
 		print("Classpath:", classpath_argument)
 		print("Command:", command)
 
@@ -804,7 +937,6 @@ def LaunchCurrentInstall() -> None:
 
 	finally:
 		BUSY = False
-
 
 
 def StartBackgroundTask(target, *args) -> None:
@@ -941,15 +1073,35 @@ def DrawInterface() -> None:
 			encoding="utf-8"
 		).strip()
 
-	DrawText("Current installation", 465, 278, SMALL_FONT, MUTED)
-	DrawText(current_version, 465, 301, MEDIUM_FONT)
+	DrawText("Mod loader", 465, 270, SMALL_FONT, MUTED)
 
-	install_rect: pygame.Rect = pygame.Rect(465, 350, 380, 50)
-	launch_rect: pygame.Rect = pygame.Rect(465, 414, 380, 50)
+	vanilla_rect: pygame.Rect = pygame.Rect(465, 290, 120, 32)
+	fabric_rect: pygame.Rect = pygame.Rect(594, 290, 120, 32)
+
+	pygame.draw.rect(
+		SCREEN,
+		ACCENT if INSTALL_LOADER == "vanilla" else BUTTON,
+		vanilla_rect,
+		border_radius=5,
+	)
+	pygame.draw.rect(
+		SCREEN,
+		ACCENT if INSTALL_LOADER == "fabric" else BUTTON,
+		fabric_rect,
+		border_radius=5,
+	)
+	DrawText("Vanilla", *vanilla_rect.center, SMALL_FONT, align="center")
+	DrawText("Fabric", *fabric_rect.center, SMALL_FONT, align="center")
+
+	DrawText("Current installation", 465, 335, SMALL_FONT, MUTED)
+	DrawText(current_version, 465, 357, MEDIUM_FONT)
+
+	install_rect: pygame.Rect = pygame.Rect(465, 390, 380, 45)
+	launch_rect: pygame.Rect = pygame.Rect(465, 447, 380, 45)
 
 	DrawButton(
 		install_rect,
-		"Install / Reinstall Selected Version",
+		("Install Fabric" if INSTALL_LOADER == "fabric" else "Install / Reinstall Selected Version"),
 		bool(SELECTED_VERSION) and not BUSY,
 	)
 
@@ -962,7 +1114,7 @@ def DrawInterface() -> None:
 	DrawText("Status", 30, 570, SMALL_FONT, MUTED)
 	DrawText(STATUS[:110], 30, 594, FONT, STATUS_COLOR)
 
-	progress_rect: pygame.Rect = pygame.Rect(465, 484, 380, 10)
+	progress_rect: pygame.Rect = pygame.Rect(465, 510, 380, 10)
 	pygame.draw.rect(SCREEN, BUTTON, progress_rect, border_radius=4)
 
 	if PROGRESS > 0:
@@ -983,6 +1135,7 @@ def Main() -> None:
 	global USERNAME
 	global USERNAME_ACTIVE
 	global USERNAME_SELECT_ALL
+	global INSTALL_LOADER
 
 	LoadUsername()
 	SaveUsername()
@@ -1066,6 +1219,13 @@ def Main() -> None:
 				USERNAME_ACTIVE = False
 				pygame.key.stop_text_input()
 
+				if pygame.Rect(465, 290, 120, 32).collidepoint(mouse_pos):
+					INSTALL_LOADER = "vanilla"
+					continue
+				elif pygame.Rect(594, 290, 120, 32).collidepoint(mouse_pos):
+					INSTALL_LOADER = "fabric"
+					continue
+
 				filter_rects: dict[str, pygame.Rect] = {
 					"release": pygame.Rect(40, 155, 105, 32),
 					"snapshot": pygame.Rect(152, 155, 105, 32),
@@ -1088,7 +1248,7 @@ def Main() -> None:
 						if 0 <= index < len(VISIBLE_VERSIONS):
 							SELECTED_VERSION = VISIBLE_VERSIONS[index]["id"]
 
-					elif pygame.Rect(465, 350, 380, 50).collidepoint(mouse_pos):
+					elif pygame.Rect(465, 390, 380, 45).collidepoint(mouse_pos):
 						if SELECTED_VERSION and not BUSY:
 							selected: dict | None = next(
 								(
@@ -1100,9 +1260,14 @@ def Main() -> None:
 							)
 
 							if selected is not None:
-								StartBackgroundTask(InstallVersion, selected)
+								install_function = (
+									InstallFabric
+									if INSTALL_LOADER == "fabric"
+									else InstallVersion
+								)
+								StartBackgroundTask(install_function, selected)
 
-					elif pygame.Rect(465, 414, 380, 50).collidepoint(mouse_pos):
+					elif pygame.Rect(465, 447, 380, 45).collidepoint(mouse_pos):
 						if not BUSY:
 							StartBackgroundTask(LaunchCurrentInstall)
 
