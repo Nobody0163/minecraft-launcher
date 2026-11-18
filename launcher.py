@@ -59,6 +59,9 @@ VERSIONS_DIR: pathlib.Path = BASE_DIR / "versions"
 ASSETS_DIR: pathlib.Path = BASE_DIR / "assets"
 LIBRARIES_DIR: pathlib.Path = BASE_DIR / "libraries"
 NATIVES_DIR: pathlib.Path = BASE_DIR / "natives"
+INSTANCES_DIR: pathlib.Path = BASE_DIR / "instances"
+INSTANCES_FILE: pathlib.Path = BASE_DIR / "instances.json"
+SELECTED_INSTANCE_FILE: pathlib.Path = BASE_DIR / "selected_instance.txt"
 CURRENT_VERSION_FILE: pathlib.Path = BASE_DIR / "current_version.txt"
 USERNAME_FILE: pathlib.Path = BASE_DIR / "username.txt"
 SCRIPT_PATH: pathlib.Path = pathlib.Path(__file__).resolve()
@@ -66,7 +69,7 @@ UPDATE_FILE: pathlib.Path = SCRIPT_PATH.with_suffix(SCRIPT_PATH.suffix + ".new")
 
 GITHUB_OWNER: str = "Nobody0163"
 GITHUB_REPOSITORY: str = "minecraft-launcher"
-LAUNCHER_VERSION: str = "1.1.3"
+LAUNCHER_VERSION: str = "1.2.0"
 GITHUB_RELEASE_API_URL: str = (
 	f"https://api.github.com/repos/{GITHUB_OWNER}/"
 	f"{GITHUB_REPOSITORY}/releases/latest"
@@ -115,6 +118,13 @@ USERNAME_RECT: pygame.Rect = pygame.Rect(70, 250, 420, 42)
 CURRENT_TAB: str = "launch"
 VERSION_FILTER: str = "release"
 INSTALL_LOADER: str = "vanilla"
+INSTANCES: list[dict] = []
+SELECTED_INSTANCE_ID: str = ""
+INSTANCE_NAME_INPUT: str = "New instance"
+INSTANCE_NAME_ACTIVE: bool = False
+INSTANCE_NAME_SELECT_ALL: bool = False
+INSTANCE_NAME_RECT: pygame.Rect = pygame.Rect(55, 225, 500, 42)
+INSTANCE_SCROLL_OFFSET: int = 0
 
 STATUS: str = "Loading Minecraft versions..."
 STATUS_COLOR: tuple[int, int, int] = TEXT
@@ -122,6 +132,146 @@ PROGRESS: float = 0.0
 BUSY: bool = False
 SHOULD_QUIT: bool = False
 
+
+
+
+def SaveInstances() -> None:
+	INSTANCES_FILE.write_text(
+		json.dumps(INSTANCES, indent=2),
+		encoding="utf-8",
+	)
+	SELECTED_INSTANCE_FILE.write_text(SELECTED_INSTANCE_ID, encoding="utf-8")
+
+
+def GetSelectedInstance() -> dict | None:
+	return next(
+		(instance for instance in INSTANCES if instance["id"] == SELECTED_INSTANCE_ID),
+		None,
+	)
+
+
+def LoadInstances() -> None:
+	global INSTANCES, SELECTED_INSTANCE_ID
+
+	INSTANCES_DIR.mkdir(parents=True, exist_ok=True)
+	if INSTANCES_FILE.is_file():
+		loaded_instances: list[dict] = json.loads(
+			INSTANCES_FILE.read_text(encoding="utf-8")
+		)
+		INSTANCES = [
+			instance
+			for instance in loaded_instances
+			if isinstance(instance, dict)
+			and isinstance(instance.get("id"), str)
+			and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", instance["id"]) is not None
+			and isinstance(instance.get("name"), str)
+			and isinstance(instance.get("version_id", ""), str)
+		]
+	else:
+		legacy_version: str = ""
+		if CURRENT_VERSION_FILE.is_file():
+			legacy_version = CURRENT_VERSION_FILE.read_text(encoding="utf-8").strip()
+		INSTANCES = [{
+			"id": "default",
+			"name": "Default",
+			"version_id": legacy_version,
+		}]
+		legacy_instance_dir: pathlib.Path = INSTANCES_DIR / "default"
+		legacy_instance_dir.mkdir(parents=True, exist_ok=True)
+		for directory_name in (
+			"saves", "mods", "config", "resourcepacks", "shaderpacks",
+			"screenshots", "logs", "crash-reports", "server-resource-packs",
+		):
+			source_dir: pathlib.Path = BASE_DIR / directory_name
+			if source_dir.is_dir():
+				shutil.move(str(source_dir), str(legacy_instance_dir / directory_name))
+		for file_name in ("options.txt", "servers.dat", "servers.dat_old", "usercache.json", "usernamecache.json"):
+			source_file: pathlib.Path = BASE_DIR / file_name
+			if source_file.is_file():
+				shutil.move(str(source_file), str(legacy_instance_dir / file_name))
+		SaveInstances()
+
+	if not INSTANCES:
+		INSTANCES = [{"id": "default", "name": "Default", "version_id": ""}]
+		SaveInstances()
+
+	for instance in INSTANCES:
+		instance_dir: pathlib.Path = INSTANCES_DIR / instance["id"]
+		instance_dir.mkdir(parents=True, exist_ok=True)
+
+	if SELECTED_INSTANCE_FILE.is_file():
+		SELECTED_INSTANCE_ID = SELECTED_INSTANCE_FILE.read_text(encoding="utf-8").strip()
+	if not any(instance["id"] == SELECTED_INSTANCE_ID for instance in INSTANCES):
+		SELECTED_INSTANCE_ID = INSTANCES[0]["id"]
+	SaveInstances()
+
+
+def CreateInstance(name: str, version_id: str = "") -> None:
+	global SELECTED_INSTANCE_ID
+
+	clean_name: str = name.strip()[:32] or f"Instance {len(INSTANCES) + 1}"
+	instance_id: str = f"instance-{__import__('uuid').uuid4().hex[:10]}"
+	installed_version_id: str = ""
+	if version_id:
+		version_dir: pathlib.Path = VERSIONS_DIR / version_id
+		version_json_path: pathlib.Path = version_dir / f"{version_id}.json"
+		if version_json_path.is_file():
+			version_metadata: dict = json.loads(version_json_path.read_text(encoding="utf-8"))
+			base_version_id: str = version_metadata.get("inheritsFrom", version_id)
+			base_version_dir: pathlib.Path = VERSIONS_DIR / base_version_id
+			if (base_version_dir / f"{base_version_id}.json").is_file() and (base_version_dir / f"{base_version_id}.jar").is_file():
+				installed_version_id = version_id
+	instance: dict = {
+		"id": instance_id,
+		"name": clean_name,
+		"version_id": installed_version_id,
+	}
+	INSTANCES.append(instance)
+	SELECTED_INSTANCE_ID = instance_id
+	(INSTANCES_DIR / instance_id).mkdir(parents=True, exist_ok=True)
+	SaveInstances()
+
+
+def DeleteSelectedInstance() -> None:
+	global SELECTED_INSTANCE_ID
+
+	if len(INSTANCES) <= 1:
+		SetStatus("You must keep at least one instance.", ERROR)
+		return
+
+	instance: dict | None = GetSelectedInstance()
+	if instance is None:
+		return
+
+	confirmation: int = ctypes.windll.user32.MessageBoxW(
+		0,
+		f"Delete the instance '{instance['name']}' and all of its worlds, mods, and settings?\n\nThis cannot be undone.",
+		"Delete Minecraft Instance",
+		0x04 | 0x30 | 0x100,
+	)
+	if confirmation != 6:
+		return
+
+	instance_id: str = instance["id"]
+	INSTANCES.remove(instance)
+	instance_dir: pathlib.Path = INSTANCES_DIR / instance_id
+	if instance_dir.exists():
+		shutil.rmtree(instance_dir)
+	SELECTED_INSTANCE_ID = INSTANCES[0]["id"]
+	SaveInstances()
+	SetStatus(f"Deleted instance {instance['name']}.", ACCENT)
+
+
+def SetInstanceVersion(version_id: str, instance_id: str | None = None) -> None:
+	target_id: str = instance_id or SELECTED_INSTANCE_ID
+	instance: dict | None = next(
+		(item for item in INSTANCES if item["id"] == target_id),
+		None,
+	)
+	if instance is None:
+		raise RuntimeError("The target instance no longer exists.")
+	instance["version_id"] = version_id
+	SaveInstances()
 
 
 def CheckForUpdates() -> bool:
@@ -487,11 +637,11 @@ def DownloadLibrary(library: dict) -> pathlib.Path | None:
 	return library_path
 
 
-def InstallFabric(version: dict) -> None:
+def InstallFabric(version: dict, instance_id: str | None = None) -> None:
 	global BUSY
 
 	# Install the vanilla files first. Fabric's version profile inherits them.
-	InstallVersion(version)
+	InstallVersion(version, instance_id)
 
 	version_id: str = version["id"]
 	version_dir: pathlib.Path = VERSIONS_DIR / version_id
@@ -544,7 +694,7 @@ def InstallFabric(version: dict) -> None:
 			encoding="utf-8",
 		)
 
-		CURRENT_VERSION_FILE.write_text(profile_id, encoding="utf-8")
+		SetInstanceVersion(profile_id, instance_id)
 		SetStatus(
 			f"Installed Fabric {loader_version} for Minecraft {version_id}.",
 			ACCENT,
@@ -554,7 +704,7 @@ def InstallFabric(version: dict) -> None:
 		BUSY = False
 
 
-def InstallVersion(version: dict) -> None:
+def InstallVersion(version: dict, instance_id: str | None = None) -> None:
 	global BUSY
 
 	BUSY = True
@@ -695,7 +845,7 @@ def InstallVersion(version: dict) -> None:
 					progress=0.32 + 0.63 * (index + 1) / total_assets,
 				)
 
-		CURRENT_VERSION_FILE.write_text(version_id, encoding="utf-8")
+		SetInstanceVersion(version_id, instance_id)
 
 		SetStatus(
 			f"Installed Minecraft {version_id} successfully.",
@@ -796,12 +946,15 @@ def LaunchCurrentInstall() -> None:
 	global BUSY
 
 	try:
-		if not CURRENT_VERSION_FILE.is_file():
-			raise FileNotFoundError("Install a Minecraft version first.")
+		instance: dict | None = GetSelectedInstance()
+		if instance is None:
+			raise FileNotFoundError("Create or select a Minecraft instance first.")
+		if not instance.get("version_id"):
+			raise FileNotFoundError("Install a Minecraft version for this instance first.")
 
-		version_id: str = CURRENT_VERSION_FILE.read_text(
-			encoding="utf-8"
-		).strip()
+		instance_id: str = instance["id"]
+		instance_dir: pathlib.Path = INSTANCES_DIR / instance_id
+		version_id: str = instance["version_id"]
 
 		version_dir: pathlib.Path = VERSIONS_DIR / version_id
 		version_json_path: pathlib.Path = version_dir / f"{version_id}.json"
@@ -865,7 +1018,7 @@ def LaunchCurrentInstall() -> None:
 		variables: dict[str, str] = {
 			"auth_player_name": USERNAME,
 			"version_name": version_id,
-			"game_directory": str(BASE_DIR),
+			"game_directory": str(instance_dir),
 			"assets_root": str(ASSETS_DIR),
 			"assets_index_name": asset_index_id,
 			"auth_uuid": "00000000000000000000000000000000",
@@ -945,7 +1098,8 @@ def LaunchCurrentInstall() -> None:
 			*game_args,
 		]
 
-		SetStatus(f"Launching Minecraft {version_id}...", ACCENT)
+		instance_dir.mkdir(parents=True, exist_ok=True)
+		SetStatus(f"Launching {instance['name']} ({version_id})...", ACCENT)
 
 		print("Client JAR:", client_path)
 		print("Client size:", client_size)
@@ -957,10 +1111,10 @@ def LaunchCurrentInstall() -> None:
 
 		subprocess.Popen(
 			command,
-			cwd=BASE_DIR,
+			cwd=instance_dir,
 		)
 
-		SetStatus(f"Minecraft {version_id} launched.", ACCENT)
+		SetStatus(f"Launched {instance['name']} ({version_id}).", ACCENT)
 
 	except Exception as exception:
 		SetStatus(f"Launch failed: {exception}", ERROR)
@@ -991,7 +1145,6 @@ def StartBackgroundTask(target, *args) -> None:
 def DrawInterface() -> None:
 	SCREEN.fill(BACKGROUND)
 
-	# Header
 	pygame.draw.rect(SCREEN, (23, 28, 37), pygame.Rect(0, 0, WIDTH, 88))
 	pygame.draw.line(SCREEN, (45, 54, 68), (0, 87), (WIDTH, 87), 1)
 	pygame.draw.rect(SCREEN, ACCENT, pygame.Rect(26, 22, 4, 43), border_radius=2)
@@ -999,10 +1152,10 @@ def DrawInterface() -> None:
 	DrawText("JAVA EDITION", 45, 57, SMALL_FONT, MUTED)
 	DrawText(f"v{LAUNCHER_VERSION}", 850, 43, SMALL_FONT, MUTED, "midright")
 
-	# Main navigation
 	tab_rects: dict[str, pygame.Rect] = {
 		"launch": pygame.Rect(25, 103, 145, 42),
 		"install": pygame.Rect(170, 103, 145, 42),
+		"instances": pygame.Rect(315, 103, 145, 42),
 	}
 	for tab_name, rect in tab_rects.items():
 		selected: bool = CURRENT_TAB == tab_name
@@ -1016,41 +1169,35 @@ def DrawInterface() -> None:
 	pygame.draw.rect(SCREEN, (48, 57, 72), content_rect, width=1, border_radius=10)
 
 	if CURRENT_TAB == "launch":
+		instance: dict | None = GetSelectedInstance()
 		DrawText("Launch Minecraft", 55, 180, TITLE_FONT)
-		DrawText("Start your currently installed version of Minecraft.", 57, 218, FONT, MUTED)
-
+		DrawText("Launch the selected Minecraft instance.", 57, 218, FONT, MUTED)
 		DrawText("Username", 70, 250, SMALL_FONT, MUTED)
 		pygame.draw.rect(SCREEN, (21, 25, 33), USERNAME_RECT, border_radius=7)
-		pygame.draw.rect(
-			SCREEN,
-			ACCENT if USERNAME_ACTIVE else (59, 69, 85),
-			USERNAME_RECT,
-			width=1,
-			border_radius=7,
-		)
+		pygame.draw.rect(SCREEN, ACCENT if USERNAME_ACTIVE else (59, 69, 85), USERNAME_RECT, width=1, border_radius=7)
 		username_surface: pygame.Surface = FONT.render(USERNAME, True, TEXT)
-		username_area: pygame.Rect = username_surface.get_rect(
-			midleft=(USERNAME_RECT.x + 12, USERNAME_RECT.centery)
-		)
+		username_area: pygame.Rect = username_surface.get_rect(midleft=(USERNAME_RECT.x + 12, USERNAME_RECT.centery))
 		clip_rect: pygame.Rect = SCREEN.get_clip()
 		SCREEN.set_clip(USERNAME_RECT.inflate(-12, -4))
 		SCREEN.blit(username_surface, username_area)
 		SCREEN.set_clip(clip_rect)
 		DrawText("Your username is saved automatically.", 70, 302, SMALL_FONT, MUTED)
 
-		current_version: str = "No installation found"
-		if CURRENT_VERSION_FILE.is_file():
-			current_version = CURRENT_VERSION_FILE.read_text(encoding="utf-8").strip() or "No installation found"
-		pygame.draw.rect(SCREEN, (23, 28, 37), pygame.Rect(555, 235, 270, 82), border_radius=8)
-		DrawText("CURRENT INSTALLATION", 575, 250, SMALL_FONT, MUTED)
-		DrawText(current_version[:28], 575, 278, MEDIUM_FONT)
+		pygame.draw.rect(SCREEN, (23, 28, 37), pygame.Rect(555, 235, 270, 105), border_radius=8)
+		DrawText("SELECTED INSTANCE", 575, 250, SMALL_FONT, MUTED)
+		DrawText(instance["name"][:24] if instance else "None", 575, 275, MEDIUM_FONT)
+		DrawText((instance.get("version_id") or "No version installed")[:30] if instance else "", 575, 307, SMALL_FONT, MUTED)
 
 		launch_rect: pygame.Rect = pygame.Rect(70, 375, 755, 54)
-		DrawButton(launch_rect, "Launch Minecraft", not BUSY)
+		DrawButton(launch_rect, "Launch Minecraft", not BUSY and bool(instance and instance.get("version_id")))
 
-	else:
+	elif CURRENT_TAB == "install":
 		DrawText("Install Minecraft", 50, 169, TITLE_FONT)
-		DrawText("Choose a game version and installation type.", 52, 205, FONT, MUTED)
+		selected_instance: dict | None = GetSelectedInstance()
+		DrawText(
+			f"Installing will update: {selected_instance['name'] if selected_instance else 'No instance selected'}",
+			52, 205, FONT, MUTED,
+		)
 
 		filter_rects: dict[str, pygame.Rect] = {
 			"release": pygame.Rect(50, 242, 112, 32),
@@ -1059,12 +1206,7 @@ def DrawInterface() -> None:
 			"all": pygame.Rect(398, 242, 65, 32),
 		}
 		for name, rect in filter_rects.items():
-			label: str = {
-				"release": "Releases",
-				"snapshot": "Snapshots",
-				"old_beta": "Old beta",
-				"all": "All",
-			}[name]
+			label: str = {"release": "Releases", "snapshot": "Snapshots", "old_beta": "Old beta", "all": "All"}[name]
 			selected_filter: bool = VERSION_FILTER == name
 			pygame.draw.rect(SCREEN, (43, 111, 78) if selected_filter else BUTTON, rect, border_radius=6)
 			if selected_filter:
@@ -1108,12 +1250,38 @@ def DrawInterface() -> None:
 			pygame.draw.rect(SCREEN, (43, 111, 78) if selected_loader else BUTTON, rect, border_radius=6)
 			pygame.draw.rect(SCREEN, ACCENT if selected_loader else (59, 69, 85), rect, width=1, border_radius=6)
 			DrawText("Normal" if loader_name == "vanilla" else "Fabric", *rect.center, FONT, TEXT if selected_loader else MUTED, "center")
-		DrawText("Fabric installs the Fabric mod loader.", 525, 397, SMALL_FONT, MUTED)
+		DrawText("Files are shared between instances.", 525, 397, SMALL_FONT, MUTED)
+		DrawButton(pygame.Rect(525, 445, 280, 48), "Install selected version", bool(SELECTED_VERSION) and not BUSY)
 
-		install_rect: pygame.Rect = pygame.Rect(525, 445, 280, 48)
-		DrawButton(install_rect, "Install selected version", bool(SELECTED_VERSION) and not BUSY)
+	else:
+		DrawText("Manage instances", 50, 169, TITLE_FONT)
+		DrawText("Each instance has separate worlds, mods and settings.", 52, 205, FONT, MUTED)
+		pygame.draw.rect(SCREEN, (21, 25, 33), INSTANCE_NAME_RECT, border_radius=7)
+		pygame.draw.rect(SCREEN, ACCENT if INSTANCE_NAME_ACTIVE else (59, 69, 85), INSTANCE_NAME_RECT, width=1, border_radius=7)
+		name_surface: pygame.Surface = FONT.render(INSTANCE_NAME_INPUT, True, TEXT)
+		SCREEN.blit(name_surface, name_surface.get_rect(midleft=(INSTANCE_NAME_RECT.x + 12, INSTANCE_NAME_RECT.centery)))
+		DrawButton(pygame.Rect(575, 225, 250, 42), "Create instance", not BUSY)
 
-	# Progress and status remain visible on both tabs.
+		instance_list_rect: pygame.Rect = pygame.Rect(50, 282, 775, 205)
+		pygame.draw.rect(SCREEN, (21, 25, 33), instance_list_rect, border_radius=7)
+		clip_rect = SCREEN.get_clip()
+		SCREEN.set_clip(instance_list_rect)
+		for index, instance in enumerate(INSTANCES):
+			y: int = 287 + index * 48 - INSTANCE_SCROLL_OFFSET
+			if y + 43 < instance_list_rect.top or y > instance_list_rect.bottom:
+				continue
+			row: pygame.Rect = pygame.Rect(55, y, 765, 42)
+			selected_instance: bool = instance["id"] == SELECTED_INSTANCE_ID
+			if selected_instance:
+				pygame.draw.rect(SCREEN, (43, 91, 70), row, border_radius=6)
+			elif row.collidepoint(pygame.mouse.get_pos()):
+				pygame.draw.rect(SCREEN, BUTTON, row, border_radius=6)
+			DrawText(instance["name"][:36], 68, row.centery - 8, FONT, TEXT if selected_instance else MUTED, "midleft")
+			DrawText(instance.get("version_id") or "No version installed", 68, row.centery + 11, SMALL_FONT, MUTED, "midleft")
+			DrawText("Selected" if selected_instance else "Select", 800, row.centery, SMALL_FONT, ACCENT if selected_instance else MUTED, "midright")
+		SCREEN.set_clip(clip_rect)
+		DrawButton(pygame.Rect(650, 493, 175, 36), "Delete selected", len(INSTANCES) > 1 and not BUSY)
+
 	progress_rect: pygame.Rect = pygame.Rect(25, 558, 850, 7)
 	pygame.draw.rect(SCREEN, (47, 56, 70), progress_rect, border_radius=4)
 	if PROGRESS > 0:
@@ -1140,9 +1308,12 @@ def Main() -> None:
 	global USERNAME_SELECT_ALL
 	global INSTALL_LOADER
 	global CURRENT_TAB
+	global SELECTED_INSTANCE_ID
+	global INSTANCE_NAME_ACTIVE, INSTANCE_NAME_INPUT, INSTANCE_NAME_SELECT_ALL, INSTANCE_SCROLL_OFFSET
 
 	LoadUsername()
 	SaveUsername()
+	LoadInstances()
 
 	if CheckForUpdates():
 		pygame.quit()
@@ -1166,32 +1337,32 @@ def Main() -> None:
 				if USERNAME:
 					SaveUsername()
 
-			elif event.type == pygame.TEXTINPUT and USERNAME_ACTIVE:
-				new_characters: str = "".join(
-					character
-					for character in event.text
-					if character.isascii()
-					and (character.isalnum() or character == "_")
-				)
-				if USERNAME_SELECT_ALL:
-					USERNAME = new_characters[:16]
-				else:
-					USERNAME = (USERNAME + new_characters)[:16]
-
-				USERNAME_SELECT_ALL = False
-				SaveUsername()
-
-			elif event.type == pygame.KEYDOWN and USERNAME_ACTIVE:
-				if event.key == pygame.K_BACKSPACE:
-					if USERNAME_SELECT_ALL:
-						USERNAME = ""
-					else:
-						USERNAME = USERNAME[:-1]
-
+			elif event.type == pygame.TEXTINPUT and (USERNAME_ACTIVE or INSTANCE_NAME_ACTIVE):
+				if USERNAME_ACTIVE:
+					new_characters: str = "".join(
+						character for character in event.text
+						if character.isascii() and (character.isalnum() or character == "_")
+					)
+					USERNAME = new_characters[:16] if USERNAME_SELECT_ALL else (USERNAME + new_characters)[:16]
 					USERNAME_SELECT_ALL = False
 					SaveUsername()
+				else:
+					new_characters = "".join(character for character in event.text if character.isprintable())
+					INSTANCE_NAME_INPUT = new_characters[:32] if INSTANCE_NAME_SELECT_ALL else (INSTANCE_NAME_INPUT + new_characters)[:32]
+					INSTANCE_NAME_SELECT_ALL = False
+
+			elif event.type == pygame.KEYDOWN and (USERNAME_ACTIVE or INSTANCE_NAME_ACTIVE):
+				if event.key == pygame.K_BACKSPACE:
+					if USERNAME_ACTIVE:
+						USERNAME = "" if USERNAME_SELECT_ALL else USERNAME[:-1]
+						USERNAME_SELECT_ALL = False
+						SaveUsername()
+					else:
+						INSTANCE_NAME_INPUT = "" if INSTANCE_NAME_SELECT_ALL else INSTANCE_NAME_INPUT[:-1]
+						INSTANCE_NAME_SELECT_ALL = False
 				elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_ESCAPE):
 					USERNAME_ACTIVE = False
+					INSTANCE_NAME_ACTIVE = False
 					pygame.key.stop_text_input()
 
 			elif event.type == pygame.MOUSEWHEEL:
@@ -1199,6 +1370,9 @@ def Main() -> None:
 				if CURRENT_TAB == "install" and pygame.Rect(50, 284, 415, 225).collidepoint(mouse_pos):
 					max_scroll: int = max(0, len(VISIBLE_VERSIONS) * 29 - 225)
 					SCROLL_OFFSET = max(0, min(max_scroll, SCROLL_OFFSET - event.y * 29))
+				elif CURRENT_TAB == "instances" and pygame.Rect(50, 282, 775, 205).collidepoint(mouse_pos):
+					max_instance_scroll: int = max(0, len(INSTANCES) * 48 - 205)
+					INSTANCE_SCROLL_OFFSET = max(0, min(max_instance_scroll, INSTANCE_SCROLL_OFFSET - event.y * 48))
 
 			elif event.type == pygame.MOUSEBUTTONDOWN:
 				if event.button != 1:
@@ -1208,6 +1382,7 @@ def Main() -> None:
 				tab_rects: dict[str, pygame.Rect] = {
 					"launch": pygame.Rect(25, 103, 145, 42),
 					"install": pygame.Rect(170, 103, 145, 42),
+					"instances": pygame.Rect(315, 103, 145, 42),
 				}
 				clicked_tab: str | None = next(
 					(name for name, rect in tab_rects.items() if rect.collidepoint(mouse_pos)),
@@ -1216,23 +1391,27 @@ def Main() -> None:
 				if clicked_tab is not None:
 					CURRENT_TAB = clicked_tab
 					USERNAME_ACTIVE = False
+					INSTANCE_NAME_ACTIVE = False
 					pygame.key.stop_text_input()
 					continue
 
 				if CURRENT_TAB == "launch":
 					if USERNAME_RECT.collidepoint(mouse_pos):
 						USERNAME_ACTIVE = True
+						INSTANCE_NAME_ACTIVE = False
 						USERNAME_SELECT_ALL = True
 						pygame.key.start_text_input()
 						continue
 
 					USERNAME_ACTIVE = False
+					INSTANCE_NAME_ACTIVE = False
 					pygame.key.stop_text_input()
 					if pygame.Rect(70, 375, 755, 54).collidepoint(mouse_pos) and not BUSY:
 						StartBackgroundTask(LaunchCurrentInstall)
 
-				else:
+				elif CURRENT_TAB == "install":
 					USERNAME_ACTIVE = False
+					INSTANCE_NAME_ACTIVE = False
 					pygame.key.stop_text_input()
 					if pygame.Rect(525, 340, 135, 38).collidepoint(mouse_pos):
 						INSTALL_LOADER = "vanilla"
@@ -1258,15 +1437,37 @@ def Main() -> None:
 							index: int = (mouse_pos[1] - 288 + SCROLL_OFFSET) // 29
 							if 0 <= index < len(VISIBLE_VERSIONS):
 								SELECTED_VERSION = VISIBLE_VERSIONS[index]["id"]
-						elif pygame.Rect(525, 445, 280, 48).collidepoint(mouse_pos):
-							if SELECTED_VERSION and not BUSY:
-								selected: dict | None = next(
-									(version for version in VERSIONS if version["id"] == SELECTED_VERSION),
-									None,
-								)
-								if selected is not None:
-									install_function = InstallFabric if INSTALL_LOADER == "fabric" else InstallVersion
-									StartBackgroundTask(install_function, selected)
+						elif pygame.Rect(525, 445, 280, 48).collidepoint(mouse_pos) and SELECTED_VERSION and not BUSY:
+							selected: dict | None = next(
+								(version for version in VERSIONS if version["id"] == SELECTED_VERSION),
+								None,
+							)
+							if selected is not None:
+								install_function = InstallFabric if INSTALL_LOADER == "fabric" else InstallVersion
+								StartBackgroundTask(install_function, selected, SELECTED_INSTANCE_ID)
+
+				else:
+					USERNAME_ACTIVE = False
+					if INSTANCE_NAME_RECT.collidepoint(mouse_pos):
+						INSTANCE_NAME_ACTIVE = True
+						INSTANCE_NAME_SELECT_ALL = True
+						pygame.key.start_text_input()
+						continue
+					INSTANCE_NAME_ACTIVE = False
+					pygame.key.stop_text_input()
+					if pygame.Rect(575, 225, 250, 42).collidepoint(mouse_pos) and not BUSY:
+						CreateInstance(INSTANCE_NAME_INPUT, SELECTED_VERSION)
+						INSTANCE_NAME_INPUT = "New instance"
+						INSTANCE_SCROLL_OFFSET = max(0, len(INSTANCES) * 48 - 205)
+						SetStatus(f"Created instance {INSTANCES[-1]['name']}.", ACCENT)
+					elif pygame.Rect(650, 493, 175, 36).collidepoint(mouse_pos) and not BUSY:
+						DeleteSelectedInstance()
+					elif pygame.Rect(50, 282, 775, 205).collidepoint(mouse_pos):
+						index = (mouse_pos[1] - 287 + INSTANCE_SCROLL_OFFSET) // 48
+						if 0 <= index < len(INSTANCES):
+							SELECTED_INSTANCE_ID = INSTANCES[index]["id"]
+							SaveInstances()
+
 
 		DrawInterface()
 		pygame.display.flip()
