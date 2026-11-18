@@ -69,7 +69,7 @@ UPDATE_FILE: pathlib.Path = SCRIPT_PATH.with_suffix(SCRIPT_PATH.suffix + ".new")
 
 GITHUB_OWNER: str = "Nobody0163"
 GITHUB_REPOSITORY: str = "minecraft-launcher"
-LAUNCHER_VERSION: str = "1.2.0"
+LAUNCHER_VERSION: str = "1.3.0"
 GITHUB_RELEASE_API_URL: str = (
 	f"https://api.github.com/repos/{GITHUB_OWNER}/"
 	f"{GITHUB_REPOSITORY}/releases/latest"
@@ -126,13 +126,34 @@ INSTANCE_NAME_SELECT_ALL: bool = False
 INSTANCE_NAME_RECT: pygame.Rect = pygame.Rect(55, 225, 500, 42)
 INSTANCE_SCROLL_OFFSET: int = 0
 
+ACTIVE_FIELD: str = ""
+FIELD_SELECT_ALL: bool = False
+MEMORY_MAX_RECT: pygame.Rect = pygame.Rect(55, 250, 180, 42)
+MEMORY_MIN_RECT: pygame.Rect = pygame.Rect(255, 250, 180, 42)
+JVM_ARGS_RECT: pygame.Rect = pygame.Rect(55, 340, 550, 42)
+RES_W_RECT: pygame.Rect = pygame.Rect(55, 430, 120, 42)
+RES_H_RECT: pygame.Rect = pygame.Rect(200, 430, 120, 42)
+
 STATUS: str = "Loading Minecraft versions..."
 STATUS_COLOR: tuple[int, int, int] = TEXT
 PROGRESS: float = 0.0
 BUSY: bool = False
 SHOULD_QUIT: bool = False
 
+DEFAULT_LAUNCH_OPTIONS: dict = {
+	"memory_max": "2G",
+	"memory_min": "512M",
+	"jvm_args": "",
+	"resolution_width": "1280",
+	"resolution_height": "720",
+}
 
+
+def EnsureInstanceOptions(instance: dict) -> None:
+	"""Ensure an instance dict has all launch option keys with defaults."""
+	for key, default in DEFAULT_LAUNCH_OPTIONS.items():
+		if key not in instance or not isinstance(instance[key], str):
+			instance[key] = default
 
 
 def SaveInstances() -> None:
@@ -144,10 +165,13 @@ def SaveInstances() -> None:
 
 
 def GetSelectedInstance() -> dict | None:
-	return next(
+	instance = next(
 		(instance for instance in INSTANCES if instance["id"] == SELECTED_INSTANCE_ID),
 		None,
 	)
+	if instance is not None:
+		EnsureInstanceOptions(instance)
+	return instance
 
 
 def LoadInstances() -> None:
@@ -167,6 +191,8 @@ def LoadInstances() -> None:
 			and isinstance(instance.get("name"), str)
 			and isinstance(instance.get("version_id", ""), str)
 		]
+		for instance in INSTANCES:
+			EnsureInstanceOptions(instance)
 	else:
 		legacy_version: str = ""
 		if CURRENT_VERSION_FILE.is_file():
@@ -175,6 +201,7 @@ def LoadInstances() -> None:
 			"id": "default",
 			"name": "Default",
 			"version_id": legacy_version,
+			**DEFAULT_LAUNCH_OPTIONS,
 		}]
 		legacy_instance_dir: pathlib.Path = INSTANCES_DIR / "default"
 		legacy_instance_dir.mkdir(parents=True, exist_ok=True)
@@ -192,12 +219,13 @@ def LoadInstances() -> None:
 		SaveInstances()
 
 	if not INSTANCES:
-		INSTANCES = [{"id": "default", "name": "Default", "version_id": ""}]
+		INSTANCES = [{"id": "default", "name": "Default", "version_id": "", **DEFAULT_LAUNCH_OPTIONS}]
 		SaveInstances()
 
 	for instance in INSTANCES:
 		instance_dir: pathlib.Path = INSTANCES_DIR / instance["id"]
 		instance_dir.mkdir(parents=True, exist_ok=True)
+		EnsureInstanceOptions(instance)
 
 	if SELECTED_INSTANCE_FILE.is_file():
 		SELECTED_INSTANCE_ID = SELECTED_INSTANCE_FILE.read_text(encoding="utf-8").strip()
@@ -225,6 +253,7 @@ def CreateInstance(name: str, version_id: str = "") -> None:
 		"id": instance_id,
 		"name": clean_name,
 		"version_id": installed_version_id,
+		**DEFAULT_LAUNCH_OPTIONS,
 	}
 	INSTANCES.append(instance)
 	SELECTED_INSTANCE_ID = instance_id
@@ -449,6 +478,29 @@ def DrawButton(
 		surface,
 		surface.get_rect(center=rect.center),
 	)
+
+
+def DrawInputField(
+	rect: pygame.Rect,
+	value: str,
+	active: bool,
+	placeholder: str = "",
+) -> None:
+	pygame.draw.rect(SCREEN, (21, 25, 33), rect, border_radius=7)
+	pygame.draw.rect(
+		SCREEN,
+		ACCENT if active else (59, 69, 85),
+		rect,
+		width=1,
+		border_radius=7,
+	)
+	display = value if value else placeholder
+	color = TEXT if value else MUTED
+	surface = FONT.render(display[:40], True, color)
+	clip = SCREEN.get_clip()
+	SCREEN.set_clip(rect.inflate(-10, -4))
+	SCREEN.blit(surface, surface.get_rect(midleft=(rect.x + 10, rect.centery)))
+	SCREEN.set_clip(clip)
 
 
 def SetStatus(
@@ -1015,6 +1067,12 @@ def LaunchCurrentInstall() -> None:
 
 		classpath_argument: str = os.pathsep.join(classpath)
 
+		memory_max = (instance.get("memory_max") or "2G").strip() or "2G"
+		memory_min = (instance.get("memory_min") or "512M").strip() or "512M"
+		extra_jvm = (instance.get("jvm_args") or "").strip()
+		res_w = (instance.get("resolution_width") or "1280").strip() or "1280"
+		res_h = (instance.get("resolution_height") or "720").strip() or "720"
+
 		variables: dict[str, str] = {
 			"auth_player_name": USERNAME,
 			"version_name": version_id,
@@ -1033,8 +1091,8 @@ def LaunchCurrentInstall() -> None:
 			"library_directory": str(LIBRARIES_DIR),
 			"clientid": "",
 			"auth_xuid": "",
-			"resolution_width": "1280",
-			"resolution_height": "720",
+			"resolution_width": res_w,
+			"resolution_height": res_h,
 		}
 
 		base_arguments: dict = version_json.get("arguments", {})
@@ -1084,6 +1142,10 @@ def LaunchCurrentInstall() -> None:
 				for key, value in variables.items():
 					argument = argument.replace("${" + key + "}", value)
 				game_args.append(argument)
+
+		memory_args = [f"-Xms{memory_min}", f"-Xmx{memory_max}"]
+		extra_jvm_list = extra_jvm.split() if extra_jvm else []
+		jvm_args = memory_args + extra_jvm_list + jvm_args
 
 		main_class: str = installation_json.get(
 			"mainClass",
@@ -1153,9 +1215,10 @@ def DrawInterface() -> None:
 	DrawText(f"v{LAUNCHER_VERSION}", 850, 43, SMALL_FONT, MUTED, "midright")
 
 	tab_rects: dict[str, pygame.Rect] = {
-		"launch": pygame.Rect(25, 103, 145, 42),
-		"install": pygame.Rect(170, 103, 145, 42),
-		"instances": pygame.Rect(315, 103, 145, 42),
+		"launch": pygame.Rect(25, 103, 130, 42),
+		"install": pygame.Rect(160, 103, 130, 42),
+		"instances": pygame.Rect(295, 103, 130, 42),
+		"options": pygame.Rect(430, 103, 130, 42),
 	}
 	for tab_name, rect in tab_rects.items():
 		selected: bool = CURRENT_TAB == tab_name
@@ -1173,23 +1236,50 @@ def DrawInterface() -> None:
 		DrawText("Launch Minecraft", 55, 180, TITLE_FONT)
 		DrawText("Launch the selected Minecraft instance.", 57, 218, FONT, MUTED)
 		DrawText("Username", 70, 250, SMALL_FONT, MUTED)
-		pygame.draw.rect(SCREEN, (21, 25, 33), USERNAME_RECT, border_radius=7)
-		pygame.draw.rect(SCREEN, ACCENT if USERNAME_ACTIVE else (59, 69, 85), USERNAME_RECT, width=1, border_radius=7)
-		username_surface: pygame.Surface = FONT.render(USERNAME, True, TEXT)
-		username_area: pygame.Rect = username_surface.get_rect(midleft=(USERNAME_RECT.x + 12, USERNAME_RECT.centery))
-		clip_rect: pygame.Rect = SCREEN.get_clip()
-		SCREEN.set_clip(USERNAME_RECT.inflate(-12, -4))
-		SCREEN.blit(username_surface, username_area)
-		SCREEN.set_clip(clip_rect)
+		DrawInputField(USERNAME_RECT, USERNAME, ACTIVE_FIELD == "username")
 		DrawText("Your username is saved automatically.", 70, 302, SMALL_FONT, MUTED)
 
 		pygame.draw.rect(SCREEN, (23, 28, 37), pygame.Rect(555, 235, 270, 105), border_radius=8)
 		DrawText("SELECTED INSTANCE", 575, 250, SMALL_FONT, MUTED)
 		DrawText(instance["name"][:24] if instance else "None", 575, 275, MEDIUM_FONT)
-		DrawText((instance.get("version_id") or "No version installed")[:30] if instance else "", 575, 307, SMALL_FONT, MUTED)
+		version_label = (instance.get("version_id") or "No version installed")[:30] if instance else ""
+		DrawText(version_label, 575, 307, SMALL_FONT, MUTED)
+		if instance:
+			mem_max = instance.get("memory_max", "2G")
+			mem_min = instance.get("memory_min", "512M")
+			DrawText(f"RAM: {mem_min} – {mem_max}", 575, 328, SMALL_FONT, MUTED)
 
 		launch_rect: pygame.Rect = pygame.Rect(70, 375, 755, 54)
 		DrawButton(launch_rect, "Launch Minecraft", not BUSY and bool(instance and instance.get("version_id")))
+
+	elif CURRENT_TAB == "options":
+		instance: dict | None = GetSelectedInstance()
+		DrawText("Launch options", 50, 169, TITLE_FONT)
+		instance_name = instance["name"] if instance else "No instance selected"
+		DrawText(f"Editing options for: {instance_name}", 52, 205, FONT, MUTED)
+
+		mem_max = instance.get("memory_max", "2G") if instance else "2G"
+		mem_min = instance.get("memory_min", "512M") if instance else "512M"
+		jvm = instance.get("jvm_args", "") if instance else ""
+		res_w = instance.get("resolution_width", "1280") if instance else "1280"
+		res_h = instance.get("resolution_height", "720") if instance else "720"
+
+		DrawText("Max memory", 55, 230, SMALL_FONT, MUTED)
+		DrawText("Min memory", 255, 230, SMALL_FONT, MUTED)
+		DrawInputField(MEMORY_MAX_RECT, mem_max, ACTIVE_FIELD == "memory_max", "2G")
+		DrawInputField(MEMORY_MIN_RECT, mem_min, ACTIVE_FIELD == "memory_min", "512M")
+		DrawText("Examples: 2G, 4G, 8G   /   512M, 1G", 450, 260, SMALL_FONT, MUTED)
+
+		DrawText("Extra JVM arguments", 55, 320, SMALL_FONT, MUTED)
+		DrawInputField(JVM_ARGS_RECT, jvm, ACTIVE_FIELD == "jvm_args", "-XX:+UseG1GC")
+		DrawText("Optional. Space-separated flags passed to Java.", 55, 390, SMALL_FONT, MUTED)
+
+		DrawText("Resolution (width × height)", 55, 410, SMALL_FONT, MUTED)
+		DrawInputField(RES_W_RECT, res_w, ACTIVE_FIELD == "res_w", "1280")
+		DrawText("×", 182, 440, FONT, MUTED)
+		DrawInputField(RES_H_RECT, res_h, ACTIVE_FIELD == "res_h", "720")
+
+		DrawText("Options are saved automatically for the selected instance.", 55, 495, SMALL_FONT, MUTED)
 
 	elif CURRENT_TAB == "install":
 		DrawText("Install Minecraft", 50, 169, TITLE_FONT)
@@ -1304,8 +1394,8 @@ def Main() -> None:
 	global VERSION_FILTER
 	global SCROLL_OFFSET
 	global USERNAME
-	global USERNAME_ACTIVE
-	global USERNAME_SELECT_ALL
+	global ACTIVE_FIELD
+	global FIELD_SELECT_ALL
 	global INSTALL_LOADER
 	global CURRENT_TAB
 	global SELECTED_INSTANCE_ID
@@ -1336,34 +1426,83 @@ def Main() -> None:
 				SHOULD_QUIT = True
 				if USERNAME:
 					SaveUsername()
+				SaveInstances()
 
-			elif event.type == pygame.TEXTINPUT and (USERNAME_ACTIVE or INSTANCE_NAME_ACTIVE):
-				if USERNAME_ACTIVE:
+			elif event.type == pygame.TEXTINPUT:
+				if ACTIVE_FIELD == "username":
 					new_characters: str = "".join(
 						character for character in event.text
 						if character.isascii() and (character.isalnum() or character == "_")
 					)
-					USERNAME = new_characters[:16] if USERNAME_SELECT_ALL else (USERNAME + new_characters)[:16]
-					USERNAME_SELECT_ALL = False
+					USERNAME = new_characters[:16] if FIELD_SELECT_ALL else (USERNAME + new_characters)[:16]
+					FIELD_SELECT_ALL = False
 					SaveUsername()
-				else:
+				elif ACTIVE_FIELD in ("memory_max", "memory_min", "jvm_args", "res_w", "res_h"):
+					instance = GetSelectedInstance()
+					if instance is None:
+						continue
+					key_map = {
+						"memory_max": "memory_max",
+						"memory_min": "memory_min",
+						"jvm_args": "jvm_args",
+						"res_w": "resolution_width",
+						"res_h": "resolution_height",
+					}
+					key = key_map[ACTIVE_FIELD]
+					current = instance.get(key, "")
+					allowed = event.text
+					if ACTIVE_FIELD in ("memory_max", "memory_min"):
+						allowed = "".join(c for c in event.text if c.isalnum() or c in "MmGgKk")
+					elif ACTIVE_FIELD in ("res_w", "res_h"):
+						allowed = "".join(c for c in event.text if c.isdigit())
+					else:
+						allowed = "".join(c for c in event.text if c.isprintable())
+					if FIELD_SELECT_ALL:
+						instance[key] = allowed[:64]
+					else:
+						instance[key] = (current + allowed)[:64]
+					FIELD_SELECT_ALL = False
+					SaveInstances()
+				elif INSTANCE_NAME_ACTIVE:
 					new_characters = "".join(character for character in event.text if character.isprintable())
 					INSTANCE_NAME_INPUT = new_characters[:32] if INSTANCE_NAME_SELECT_ALL else (INSTANCE_NAME_INPUT + new_characters)[:32]
 					INSTANCE_NAME_SELECT_ALL = False
 
-			elif event.type == pygame.KEYDOWN and (USERNAME_ACTIVE or INSTANCE_NAME_ACTIVE):
-				if event.key == pygame.K_BACKSPACE:
-					if USERNAME_ACTIVE:
-						USERNAME = "" if USERNAME_SELECT_ALL else USERNAME[:-1]
-						USERNAME_SELECT_ALL = False
-						SaveUsername()
-					else:
+			elif event.type == pygame.KEYDOWN:
+				if ACTIVE_FIELD:
+					if event.key == pygame.K_BACKSPACE:
+						if ACTIVE_FIELD == "username":
+							USERNAME = "" if FIELD_SELECT_ALL else USERNAME[:-1]
+							FIELD_SELECT_ALL = False
+							SaveUsername()
+						elif ACTIVE_FIELD in ("memory_max", "memory_min", "jvm_args", "res_w", "res_h"):
+							instance = GetSelectedInstance()
+							if instance is not None:
+								key_map = {
+									"memory_max": "memory_max",
+									"memory_min": "memory_min",
+									"jvm_args": "jvm_args",
+									"res_w": "resolution_width",
+									"res_h": "resolution_height",
+								}
+								key = key_map[ACTIVE_FIELD]
+								if FIELD_SELECT_ALL:
+									instance[key] = ""
+								else:
+									instance[key] = instance.get(key, "")[:-1]
+								FIELD_SELECT_ALL = False
+								SaveInstances()
+					elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_ESCAPE, pygame.K_TAB):
+						ACTIVE_FIELD = ""
+						FIELD_SELECT_ALL = False
+						pygame.key.stop_text_input()
+				elif INSTANCE_NAME_ACTIVE:
+					if event.key == pygame.K_BACKSPACE:
 						INSTANCE_NAME_INPUT = "" if INSTANCE_NAME_SELECT_ALL else INSTANCE_NAME_INPUT[:-1]
 						INSTANCE_NAME_SELECT_ALL = False
-				elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_ESCAPE):
-					USERNAME_ACTIVE = False
-					INSTANCE_NAME_ACTIVE = False
-					pygame.key.stop_text_input()
+					elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_ESCAPE):
+						INSTANCE_NAME_ACTIVE = False
+						pygame.key.stop_text_input()
 
 			elif event.type == pygame.MOUSEWHEEL:
 				mouse_pos: tuple[int, int] = pygame.mouse.get_pos()
@@ -1380,9 +1519,10 @@ def Main() -> None:
 
 				mouse_pos = event.pos
 				tab_rects: dict[str, pygame.Rect] = {
-					"launch": pygame.Rect(25, 103, 145, 42),
-					"install": pygame.Rect(170, 103, 145, 42),
-					"instances": pygame.Rect(315, 103, 145, 42),
+					"launch": pygame.Rect(25, 103, 130, 42),
+					"install": pygame.Rect(160, 103, 130, 42),
+					"instances": pygame.Rect(295, 103, 130, 42),
+					"options": pygame.Rect(430, 103, 130, 42),
 				}
 				clicked_tab: str | None = next(
 					(name for name, rect in tab_rects.items() if rect.collidepoint(mouse_pos)),
@@ -1390,27 +1530,51 @@ def Main() -> None:
 				)
 				if clicked_tab is not None:
 					CURRENT_TAB = clicked_tab
-					USERNAME_ACTIVE = False
+					ACTIVE_FIELD = ""
 					INSTANCE_NAME_ACTIVE = False
 					pygame.key.stop_text_input()
 					continue
 
 				if CURRENT_TAB == "launch":
 					if USERNAME_RECT.collidepoint(mouse_pos):
-						USERNAME_ACTIVE = True
+						ACTIVE_FIELD = "username"
+						FIELD_SELECT_ALL = True
 						INSTANCE_NAME_ACTIVE = False
-						USERNAME_SELECT_ALL = True
 						pygame.key.start_text_input()
 						continue
 
-					USERNAME_ACTIVE = False
+					ACTIVE_FIELD = ""
 					INSTANCE_NAME_ACTIVE = False
 					pygame.key.stop_text_input()
 					if pygame.Rect(70, 375, 755, 54).collidepoint(mouse_pos) and not BUSY:
 						StartBackgroundTask(LaunchCurrentInstall)
 
+				elif CURRENT_TAB == "options":
+					field_clicked = None
+					if MEMORY_MAX_RECT.collidepoint(mouse_pos):
+						field_clicked = "memory_max"
+					elif MEMORY_MIN_RECT.collidepoint(mouse_pos):
+						field_clicked = "memory_min"
+					elif JVM_ARGS_RECT.collidepoint(mouse_pos):
+						field_clicked = "jvm_args"
+					elif RES_W_RECT.collidepoint(mouse_pos):
+						field_clicked = "res_w"
+					elif RES_H_RECT.collidepoint(mouse_pos):
+						field_clicked = "res_h"
+
+					if field_clicked:
+						ACTIVE_FIELD = field_clicked
+						FIELD_SELECT_ALL = True
+						INSTANCE_NAME_ACTIVE = False
+						pygame.key.start_text_input()
+						continue
+
+					ACTIVE_FIELD = ""
+					INSTANCE_NAME_ACTIVE = False
+					pygame.key.stop_text_input()
+
 				elif CURRENT_TAB == "install":
-					USERNAME_ACTIVE = False
+					ACTIVE_FIELD = ""
 					INSTANCE_NAME_ACTIVE = False
 					pygame.key.stop_text_input()
 					if pygame.Rect(525, 340, 135, 38).collidepoint(mouse_pos):
@@ -1446,8 +1610,8 @@ def Main() -> None:
 								install_function = InstallFabric if INSTALL_LOADER == "fabric" else InstallVersion
 								StartBackgroundTask(install_function, selected, SELECTED_INSTANCE_ID)
 
-				else:
-					USERNAME_ACTIVE = False
+				elif CURRENT_TAB == "instances":
+					ACTIVE_FIELD = ""
 					if INSTANCE_NAME_RECT.collidepoint(mouse_pos):
 						INSTANCE_NAME_ACTIVE = True
 						INSTANCE_NAME_SELECT_ALL = True
