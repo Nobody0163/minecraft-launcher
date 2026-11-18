@@ -65,7 +65,7 @@ UPDATE_FILE: pathlib.Path = SCRIPT_PATH.with_suffix(SCRIPT_PATH.suffix + ".new")
 
 GITHUB_OWNER: str = "Nobody0163"
 GITHUB_REPOSITORY: str = "minecraft-launcher"
-LAUNCHER_VERSION: str = "1.1.0"
+LAUNCHER_VERSION: str = "1.1.1"
 GITHUB_RELEASE_API_URL: str = (
 	f"https://api.github.com/repos/{GITHUB_OWNER}/"
 	f"{GITHUB_REPOSITORY}/releases/latest"
@@ -861,14 +861,19 @@ def LaunchCurrentInstall() -> None:
 
 		base_arguments: dict = version_json.get("arguments", {})
 		installation_arguments: dict = installation_json.get("arguments", {})
-		jvm_arguments: list = [
-			*base_arguments.get("jvm", []),
-			*installation_arguments.get("jvm", []),
-		]
-		game_arguments: list = [
-			*base_arguments.get("game", []),
-			*installation_arguments.get("game", []),
-		]
+
+		if installation_json.get("inheritsFrom"):
+			jvm_arguments: list = [
+				*base_arguments.get("jvm", []),
+				*installation_arguments.get("jvm", []),
+			]
+			game_arguments: list = [
+				*base_arguments.get("game", []),
+				*installation_arguments.get("game", []),
+			]
+		else:
+			jvm_arguments = base_arguments.get("jvm", [])
+			game_arguments = base_arguments.get("game", [])
 
 		if base_arguments or installation_arguments:
 			jvm_args: list[str] = GetArgumentValues(jvm_arguments, variables)
@@ -896,7 +901,7 @@ def LaunchCurrentInstall() -> None:
 				"",
 			).split()
 
-			game_args: list[str] = []
+			game_args = []
 			for argument in legacy_arguments:
 				for key, value in variables.items():
 					argument = argument.replace("${" + key + "}", value)
