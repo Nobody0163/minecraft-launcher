@@ -31,6 +31,7 @@ import zipfile
 import importlib
 import subprocess
 import sys
+import ctypes
 
 DEPENDENCIES = {
 	"pygame": "pygame-ce",
@@ -65,7 +66,7 @@ UPDATE_FILE: pathlib.Path = SCRIPT_PATH.with_suffix(SCRIPT_PATH.suffix + ".new")
 
 GITHUB_OWNER: str = "Nobody0163"
 GITHUB_REPOSITORY: str = "minecraft-launcher"
-LAUNCHER_VERSION: str = "1.1.1"
+LAUNCHER_VERSION: str = "1.1.2"
 GITHUB_RELEASE_API_URL: str = (
 	f"https://api.github.com/repos/{GITHUB_OWNER}/"
 	f"{GITHUB_REPOSITORY}/releases/latest"
@@ -138,6 +139,7 @@ def CheckForUpdates() -> bool:
 		current_parts: tuple[int, ...] = tuple(
 			int(part) for part in re.findall(r"\d+", LAUNCHER_VERSION)
 		)
+
 		release_parts: tuple[int, ...] = tuple(
 			int(part) for part in re.findall(r"\d+", release_version)
 		)
@@ -155,6 +157,19 @@ def CheckForUpdates() -> bool:
 				f"Update {release_version} is available, but the release "
 				f"does not contain an asset named {SCRIPT_PATH.name}."
 			)
+			return False
+
+		result: int = ctypes.windll.user32.MessageBoxW(
+			0,
+			f"A new launcher update is available!\n\n"
+			f"Current version: {LAUNCHER_VERSION}\n"
+			f"New version: {release_version}\n\n"
+			f"Would you like to install it now?",
+			"Minecraft Launcher Update",
+			0x04 | 0x20,
+		)
+
+		if result != 6:
 			return False
 
 		SetStatus(f"Downloading launcher update {release_version}...")
@@ -221,6 +236,7 @@ def CheckForUpdates() -> bool:
 	except Exception as exception:
 		print(f"Launcher update check failed: {exception}")
 		return False
+
 
 def LoadUsername() -> None:
 	global USERNAME
