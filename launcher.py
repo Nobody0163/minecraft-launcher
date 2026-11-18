@@ -66,7 +66,7 @@ UPDATE_FILE: pathlib.Path = SCRIPT_PATH.with_suffix(SCRIPT_PATH.suffix + ".new")
 
 GITHUB_OWNER: str = "Nobody0163"
 GITHUB_REPOSITORY: str = "minecraft-launcher"
-LAUNCHER_VERSION: str = "1.1.2"
+LAUNCHER_VERSION: str = "1.1.3"
 GITHUB_RELEASE_API_URL: str = (
 	f"https://api.github.com/repos/{GITHUB_OWNER}/"
 	f"{GITHUB_REPOSITORY}/releases/latest"
@@ -83,14 +83,14 @@ WIDTH: int = 900
 HEIGHT: int = 650
 FPS: int = 60
 
-BACKGROUND: tuple[int, int, int] = (28, 30, 36)
-PANEL: tuple[int, int, int] = (40, 43, 51)
-BUTTON: tuple[int, int, int] = (65, 72, 88)
-BUTTON_HOVER: tuple[int, int, int] = (85, 96, 120)
-TEXT: tuple[int, int, int] = (235, 237, 242)
-MUTED: tuple[int, int, int] = (160, 165, 178)
-ACCENT: tuple[int, int, int] = (85, 170, 105)
-ERROR: tuple[int, int, int] = (220, 85, 85)
+BACKGROUND: tuple[int, int, int] = (18, 21, 28)
+PANEL: tuple[int, int, int] = (29, 34, 44)
+BUTTON: tuple[int, int, int] = (43, 51, 65)
+BUTTON_HOVER: tuple[int, int, int] = (56, 67, 84)
+TEXT: tuple[int, int, int] = (239, 242, 248)
+MUTED: tuple[int, int, int] = (145, 155, 172)
+ACCENT: tuple[int, int, int] = (76, 190, 124)
+ERROR: tuple[int, int, int] = (232, 91, 100)
 
 pygame.init()
 
@@ -111,7 +111,8 @@ SELECTED_VERSION: str = ""
 USERNAME: str = "NO USERNAME SET"
 USERNAME_ACTIVE: bool = False
 USERNAME_SELECT_ALL: bool = False
-USERNAME_RECT: pygame.Rect = pygame.Rect(465, 220, 380, 36)
+USERNAME_RECT: pygame.Rect = pygame.Rect(70, 250, 420, 42)
+CURRENT_TAB: str = "launch"
 VERSION_FILTER: str = "release"
 INSTALL_LOADER: str = "vanilla"
 
@@ -271,14 +272,22 @@ def DrawButton(
 	enabled: bool = True,
 ) -> None:
 	mouse_pos: tuple[int, int] = pygame.mouse.get_pos()
+	hovered: bool = enabled and rect.collidepoint(mouse_pos)
 
-	color: tuple[int, int, int] = BUTTON
-	if enabled and rect.collidepoint(mouse_pos):
-		color = BUTTON_HOVER
+	color: tuple[int, int, int] = BUTTON_HOVER if hovered else BUTTON
 	if not enabled:
-		color = (48, 50, 57)
+		color = (35, 40, 50)
 
-	pygame.draw.rect(SCREEN, color, rect, border_radius=6)
+	shadow_rect: pygame.Rect = rect.move(0, 3)
+	pygame.draw.rect(SCREEN, (12, 15, 20), shadow_rect, border_radius=8)
+	pygame.draw.rect(SCREEN, color, rect, border_radius=8)
+	pygame.draw.rect(
+		SCREEN,
+		(91, 105, 126) if hovered else (59, 69, 85),
+		rect,
+		width=1,
+		border_radius=8,
+	)
 
 	surface: pygame.Surface = BUTTON_FONT.render(
 		text,
@@ -982,167 +991,140 @@ def StartBackgroundTask(target, *args) -> None:
 def DrawInterface() -> None:
 	SCREEN.fill(BACKGROUND)
 
-	DrawText("Minecraft Launcher", 30, 24, TITLE_FONT)
-	DrawText("Java Edition", 32, 66, SMALL_FONT, MUTED)
+	# Header
+	pygame.draw.rect(SCREEN, (23, 28, 37), pygame.Rect(0, 0, WIDTH, 88))
+	pygame.draw.line(SCREEN, (45, 54, 68), (0, 87), (WIDTH, 87), 1)
+	pygame.draw.rect(SCREEN, ACCENT, pygame.Rect(26, 22, 4, 43), border_radius=2)
+	DrawText("Minecraft Launcher", 43, 17, TITLE_FONT)
+	DrawText("JAVA EDITION", 45, 57, SMALL_FONT, MUTED)
+	DrawText(f"v{LAUNCHER_VERSION}", 850, 43, SMALL_FONT, MUTED, "midright")
 
-	pygame.draw.rect(
-		SCREEN,
-		PANEL,
-		pygame.Rect(25, 105, 400, 450),
-		border_radius=8,
-	)
-
-	DrawText("Select a version", 42, 119, MEDIUM_FONT)
-
-	filter_rects: dict[str, pygame.Rect] = {
-		"release": pygame.Rect(40, 155, 105, 32),
-		"snapshot": pygame.Rect(152, 155, 105, 32),
-		"old_beta": pygame.Rect(264, 155, 75, 32),
-		"all": pygame.Rect(346, 155, 65, 32),
+	# Main navigation
+	tab_rects: dict[str, pygame.Rect] = {
+		"launch": pygame.Rect(25, 103, 145, 42),
+		"install": pygame.Rect(170, 103, 145, 42),
 	}
+	for tab_name, rect in tab_rects.items():
+		selected: bool = CURRENT_TAB == tab_name
+		pygame.draw.rect(SCREEN, PANEL if selected else BACKGROUND, rect, border_radius=8)
+		if selected:
+			pygame.draw.rect(SCREEN, ACCENT, pygame.Rect(rect.x, rect.bottom - 3, rect.width, 3), border_radius=2)
+		DrawText(tab_name.title(), *rect.center, MEDIUM_FONT, TEXT if selected else MUTED, "center")
 
-	for name, rect in filter_rects.items():
-		label: str = {
-			"release": "Releases",
-			"snapshot": "Snapshots",
-			"old_beta": "Old beta",
-			"all": "All",
-		}[name]
+	content_rect: pygame.Rect = pygame.Rect(25, 153, 850, 390)
+	pygame.draw.rect(SCREEN, PANEL, content_rect, border_radius=10)
+	pygame.draw.rect(SCREEN, (48, 57, 72), content_rect, width=1, border_radius=10)
 
-		color: tuple[int, int, int] = (
-			ACCENT if VERSION_FILTER == name else BUTTON
+	if CURRENT_TAB == "launch":
+		DrawText("Launch Minecraft", 55, 180, TITLE_FONT)
+		DrawText("Start your currently installed version of Minecraft.", 57, 218, FONT, MUTED)
+
+		DrawText("Username", 70, 250, SMALL_FONT, MUTED)
+		pygame.draw.rect(SCREEN, (21, 25, 33), USERNAME_RECT, border_radius=7)
+		pygame.draw.rect(
+			SCREEN,
+			ACCENT if USERNAME_ACTIVE else (59, 69, 85),
+			USERNAME_RECT,
+			width=1,
+			border_radius=7,
 		)
-
-		pygame.draw.rect(SCREEN, color, rect, border_radius=5)
-
-		surface: pygame.Surface = SMALL_FONT.render(label, True, TEXT)
-		SCREEN.blit(surface, surface.get_rect(center=rect.center))
-
-	list_rect: pygame.Rect = pygame.Rect(40, 200, 370, 335)
-	pygame.draw.rect(SCREEN, BACKGROUND, list_rect, border_radius=5)
-
-	clip_rect: pygame.Rect = SCREEN.get_clip()
-	SCREEN.set_clip(list_rect)
-
-	for index, version in enumerate(VISIBLE_VERSIONS):
-		y: int = 204 + index * 31 - SCROLL_OFFSET
-
-		if y < 170 or y > 540:
-			continue
-
-		row: pygame.Rect = pygame.Rect(43, y, 364, 28)
-
-		if version["id"] == SELECTED_VERSION:
-			pygame.draw.rect(SCREEN, ACCENT, row, border_radius=4)
-
-		elif row.collidepoint(pygame.mouse.get_pos()):
-			pygame.draw.rect(SCREEN, BUTTON, row, border_radius=4)
-
-		DrawText(version["id"], 52, row.centery, FONT, align="midleft")
-
-		DrawText(
-			version["type"].replace("_", " ").title(),
-			395,
-			row.centery,
-			SMALL_FONT,
-			TEXT if version["id"] == SELECTED_VERSION else MUTED,
-			align="midright",
+		username_surface: pygame.Surface = FONT.render(USERNAME, True, TEXT)
+		username_area: pygame.Rect = username_surface.get_rect(
+			midleft=(USERNAME_RECT.x + 12, USERNAME_RECT.centery)
 		)
+		clip_rect: pygame.Rect = SCREEN.get_clip()
+		SCREEN.set_clip(USERNAME_RECT.inflate(-12, -4))
+		SCREEN.blit(username_surface, username_area)
+		SCREEN.set_clip(clip_rect)
+		DrawText("Your username is saved automatically.", 70, 302, SMALL_FONT, MUTED)
 
-	SCREEN.set_clip(clip_rect)
+		current_version: str = "No installation found"
+		if CURRENT_VERSION_FILE.is_file():
+			current_version = CURRENT_VERSION_FILE.read_text(encoding="utf-8").strip() or "No installation found"
+		pygame.draw.rect(SCREEN, (23, 28, 37), pygame.Rect(555, 235, 270, 82), border_radius=8)
+		DrawText("CURRENT INSTALLATION", 575, 250, SMALL_FONT, MUTED)
+		DrawText(current_version[:28], 575, 278, MEDIUM_FONT)
 
-	pygame.draw.rect(
-		SCREEN,
-		PANEL,
-		pygame.Rect(445, 105, 430, 450),
-		border_radius=8,
-	)
+		launch_rect: pygame.Rect = pygame.Rect(70, 375, 755, 54)
+		DrawButton(launch_rect, "Launch Minecraft", not BUSY)
 
-	DrawText("Installation", 465, 119, MEDIUM_FONT)
-
-	if SELECTED_VERSION:
-		DrawText(f"Selected: {SELECTED_VERSION}", 465, 165, FONT)
 	else:
-		DrawText("Select a version from the list.", 465, 165, FONT, MUTED)
+		DrawText("Install Minecraft", 50, 169, TITLE_FONT)
+		DrawText("Choose a game version and installation type.", 52, 205, FONT, MUTED)
 
-	DrawText("Username", 465, 195, SMALL_FONT, MUTED)
+		filter_rects: dict[str, pygame.Rect] = {
+			"release": pygame.Rect(50, 242, 112, 32),
+			"snapshot": pygame.Rect(170, 242, 112, 32),
+			"old_beta": pygame.Rect(290, 242, 100, 32),
+			"all": pygame.Rect(398, 242, 65, 32),
+		}
+		for name, rect in filter_rects.items():
+			label: str = {
+				"release": "Releases",
+				"snapshot": "Snapshots",
+				"old_beta": "Old beta",
+				"all": "All",
+			}[name]
+			selected_filter: bool = VERSION_FILTER == name
+			pygame.draw.rect(SCREEN, (43, 111, 78) if selected_filter else BUTTON, rect, border_radius=6)
+			if selected_filter:
+				pygame.draw.rect(SCREEN, ACCENT, rect, width=1, border_radius=6)
+			DrawText(label, *rect.center, SMALL_FONT, TEXT if selected_filter else MUTED, "center")
 
-	pygame.draw.rect(
-		SCREEN,
-		BUTTON_HOVER if USERNAME_ACTIVE else BACKGROUND,
-		USERNAME_RECT,
-		border_radius=5,
-	)
-	pygame.draw.rect(
-		SCREEN,
-		ACCENT if USERNAME_ACTIVE else BUTTON,
-		USERNAME_RECT,
-		width=2,
-		border_radius=5,
-	)
+		list_rect: pygame.Rect = pygame.Rect(50, 284, 415, 225)
+		pygame.draw.rect(SCREEN, (21, 25, 33), list_rect, border_radius=7)
+		clip_rect = SCREEN.get_clip()
+		SCREEN.set_clip(list_rect)
+		for index, version in enumerate(VISIBLE_VERSIONS):
+			y: int = 288 + index * 29 - SCROLL_OFFSET
+			if y + 26 < list_rect.top or y > list_rect.bottom:
+				continue
+			row: pygame.Rect = pygame.Rect(54, y, 407, 26)
+			is_selected: bool = version["id"] == SELECTED_VERSION
+			if is_selected:
+				pygame.draw.rect(SCREEN, (43, 91, 70), row, border_radius=5)
+			elif row.collidepoint(pygame.mouse.get_pos()):
+				pygame.draw.rect(SCREEN, BUTTON, row, border_radius=5)
+			DrawText(version["id"], 64, row.centery, FONT, align="midleft")
+			DrawText(version["type"].replace("_", " ").title(), 450, row.centery, SMALL_FONT, MUTED, "midright")
+		SCREEN.set_clip(clip_rect)
 
-	username_surface: pygame.Surface = FONT.render(USERNAME, True, TEXT)
-	username_area: pygame.Rect = username_surface.get_rect(
-		midleft=(USERNAME_RECT.x + 12, USERNAME_RECT.centery)
-	)
-	SCREEN.blit(username_surface, username_area)
+		max_scroll: int = max(0, len(VISIBLE_VERSIONS) * 29 - list_rect.height)
+		if max_scroll > 0:
+			track: pygame.Rect = pygame.Rect(469, 288, 3, 221)
+			thumb_height: int = max(24, int(track.height * track.height / (track.height + max_scroll)))
+			thumb_y: int = track.y + int((track.height - thumb_height) * SCROLL_OFFSET / max_scroll)
+			pygame.draw.rect(SCREEN, (48, 57, 72), track, border_radius=2)
+			pygame.draw.rect(SCREEN, (120, 135, 155), pygame.Rect(track.x, thumb_y, 3, thumb_height), border_radius=2)
 
-	current_version: str = "None installed"
+		pygame.draw.line(SCREEN, (48, 57, 72), (495, 235), (495, 510), 1)
+		DrawText("Selected version", 525, 245, SMALL_FONT, MUTED)
+		DrawText(SELECTED_VERSION or "None selected", 525, 269, MEDIUM_FONT)
+		DrawText("Installation type", 525, 315, SMALL_FONT, MUTED)
+		vanilla_rect: pygame.Rect = pygame.Rect(525, 340, 135, 38)
+		fabric_rect: pygame.Rect = pygame.Rect(670, 340, 135, 38)
+		for loader_name, rect in (("vanilla", vanilla_rect), ("fabric", fabric_rect)):
+			selected_loader: bool = INSTALL_LOADER == loader_name
+			pygame.draw.rect(SCREEN, (43, 111, 78) if selected_loader else BUTTON, rect, border_radius=6)
+			pygame.draw.rect(SCREEN, ACCENT if selected_loader else (59, 69, 85), rect, width=1, border_radius=6)
+			DrawText("Normal" if loader_name == "vanilla" else "Fabric", *rect.center, FONT, TEXT if selected_loader else MUTED, "center")
+		DrawText("Fabric installs the Fabric mod loader.", 525, 397, SMALL_FONT, MUTED)
 
-	if CURRENT_VERSION_FILE.is_file():
-		current_version = CURRENT_VERSION_FILE.read_text(
-			encoding="utf-8"
-		).strip()
+		install_rect: pygame.Rect = pygame.Rect(525, 445, 280, 48)
+		DrawButton(install_rect, "Install selected version", bool(SELECTED_VERSION) and not BUSY)
 
-	DrawText("Mod loader", 465, 270, SMALL_FONT, MUTED)
-
-	vanilla_rect: pygame.Rect = pygame.Rect(465, 290, 120, 32)
-	fabric_rect: pygame.Rect = pygame.Rect(594, 290, 120, 32)
-
-	pygame.draw.rect(
-		SCREEN,
-		ACCENT if INSTALL_LOADER == "vanilla" else BUTTON,
-		vanilla_rect,
-		border_radius=5,
-	)
-	pygame.draw.rect(
-		SCREEN,
-		ACCENT if INSTALL_LOADER == "fabric" else BUTTON,
-		fabric_rect,
-		border_radius=5,
-	)
-	DrawText("Vanilla", *vanilla_rect.center, SMALL_FONT, align="center")
-	DrawText("Fabric", *fabric_rect.center, SMALL_FONT, align="center")
-
-	DrawText("Current installation", 465, 335, SMALL_FONT, MUTED)
-	DrawText(current_version, 465, 357, MEDIUM_FONT)
-
-	install_rect: pygame.Rect = pygame.Rect(465, 390, 380, 45)
-	launch_rect: pygame.Rect = pygame.Rect(465, 447, 380, 45)
-
-	DrawButton(
-		install_rect,
-		("Install Fabric" if INSTALL_LOADER == "fabric" else "Install / Reinstall Selected Version"),
-		bool(SELECTED_VERSION) and not BUSY,
-	)
-
-	DrawButton(
-		launch_rect,
-		"Launch Current Install",
-		not BUSY,
-	)
-
-	DrawText("Status", 30, 570, SMALL_FONT, MUTED)
-	DrawText(STATUS[:110], 30, 594, FONT, STATUS_COLOR)
-
-	progress_rect: pygame.Rect = pygame.Rect(465, 510, 380, 10)
-	pygame.draw.rect(SCREEN, BUTTON, progress_rect, border_radius=4)
-
+	# Progress and status remain visible on both tabs.
+	progress_rect: pygame.Rect = pygame.Rect(25, 558, 850, 7)
+	pygame.draw.rect(SCREEN, (47, 56, 70), progress_rect, border_radius=4)
 	if PROGRESS > 0:
 		fill_rect: pygame.Rect = progress_rect.copy()
-		fill_rect.width = int(fill_rect.width * PROGRESS)
-
+		fill_rect.width = max(4, int(fill_rect.width * PROGRESS))
 		pygame.draw.rect(SCREEN, ACCENT, fill_rect, border_radius=4)
+
+	pygame.draw.rect(SCREEN, (23, 28, 37), pygame.Rect(25, 578, 850, 48), border_radius=8)
+	status_dot_color: tuple[int, int, int] = ERROR if STATUS_COLOR == ERROR else ACCENT
+	pygame.draw.circle(SCREEN, status_dot_color, (44, 602), 4)
+	DrawText(STATUS[:115], 58, 602, FONT, STATUS_COLOR, "midleft")
 
 
 SCROLL_OFFSET: int = 0
@@ -1157,6 +1139,7 @@ def Main() -> None:
 	global USERNAME_ACTIVE
 	global USERNAME_SELECT_ALL
 	global INSTALL_LOADER
+	global CURRENT_TAB
 
 	LoadUsername()
 	SaveUsername()
@@ -1213,84 +1196,77 @@ def Main() -> None:
 
 			elif event.type == pygame.MOUSEWHEEL:
 				mouse_pos: tuple[int, int] = pygame.mouse.get_pos()
-
-				if pygame.Rect(40, 200, 370, 335).collidepoint(mouse_pos):
-					max_scroll: int = max(
-						0,
-						len(VISIBLE_VERSIONS) * 31 - 330,
-					)
-
-					SCROLL_OFFSET = max(
-						0,
-						min(max_scroll, SCROLL_OFFSET - event.y * 31),
-					)
+				if CURRENT_TAB == "install" and pygame.Rect(50, 284, 415, 225).collidepoint(mouse_pos):
+					max_scroll: int = max(0, len(VISIBLE_VERSIONS) * 29 - 225)
+					SCROLL_OFFSET = max(0, min(max_scroll, SCROLL_OFFSET - event.y * 29))
 
 			elif event.type == pygame.MOUSEBUTTONDOWN:
 				if event.button != 1:
 					continue
 
 				mouse_pos = event.pos
-
-				if USERNAME_RECT.collidepoint(mouse_pos):
-					USERNAME_ACTIVE = True
-					USERNAME_SELECT_ALL = True
-					pygame.key.start_text_input()
-					continue
-
-				USERNAME_ACTIVE = False
-				pygame.key.stop_text_input()
-
-				if pygame.Rect(465, 290, 120, 32).collidepoint(mouse_pos):
-					INSTALL_LOADER = "vanilla"
-					continue
-				elif pygame.Rect(594, 290, 120, 32).collidepoint(mouse_pos):
-					INSTALL_LOADER = "fabric"
-					continue
-
-				filter_rects: dict[str, pygame.Rect] = {
-					"release": pygame.Rect(40, 155, 105, 32),
-					"snapshot": pygame.Rect(152, 155, 105, 32),
-					"old_beta": pygame.Rect(264, 155, 75, 32),
-					"all": pygame.Rect(346, 155, 65, 32),
+				tab_rects: dict[str, pygame.Rect] = {
+					"launch": pygame.Rect(25, 103, 145, 42),
+					"install": pygame.Rect(170, 103, 145, 42),
 				}
+				clicked_tab: str | None = next(
+					(name for name, rect in tab_rects.items() if rect.collidepoint(mouse_pos)),
+					None,
+				)
+				if clicked_tab is not None:
+					CURRENT_TAB = clicked_tab
+					USERNAME_ACTIVE = False
+					pygame.key.stop_text_input()
+					continue
 
-				for name, rect in filter_rects.items():
-					if rect.collidepoint(mouse_pos):
-						VERSION_FILTER = name
-						ApplyVersionFilter()
-						SCROLL_OFFSET = 0
-						break
+				if CURRENT_TAB == "launch":
+					if USERNAME_RECT.collidepoint(mouse_pos):
+						USERNAME_ACTIVE = True
+						USERNAME_SELECT_ALL = True
+						pygame.key.start_text_input()
+						continue
+
+					USERNAME_ACTIVE = False
+					pygame.key.stop_text_input()
+					if pygame.Rect(70, 375, 755, 54).collidepoint(mouse_pos) and not BUSY:
+						StartBackgroundTask(LaunchCurrentInstall)
+
 				else:
-					if pygame.Rect(40, 200, 370, 335).collidepoint(mouse_pos):
-						index: int = (
-							mouse_pos[1] - 204 + SCROLL_OFFSET
-						) // 31
+					USERNAME_ACTIVE = False
+					pygame.key.stop_text_input()
+					if pygame.Rect(525, 340, 135, 38).collidepoint(mouse_pos):
+						INSTALL_LOADER = "vanilla"
+						continue
+					elif pygame.Rect(670, 340, 135, 38).collidepoint(mouse_pos):
+						INSTALL_LOADER = "fabric"
+						continue
 
-						if 0 <= index < len(VISIBLE_VERSIONS):
-							SELECTED_VERSION = VISIBLE_VERSIONS[index]["id"]
-
-					elif pygame.Rect(465, 390, 380, 45).collidepoint(mouse_pos):
-						if SELECTED_VERSION and not BUSY:
-							selected: dict | None = next(
-								(
-									version
-									for version in VERSIONS
-									if version["id"] == SELECTED_VERSION
-								),
-								None,
-							)
-
-							if selected is not None:
-								install_function = (
-									InstallFabric
-									if INSTALL_LOADER == "fabric"
-									else InstallVersion
+					filter_rects: dict[str, pygame.Rect] = {
+						"release": pygame.Rect(50, 242, 112, 32),
+						"snapshot": pygame.Rect(170, 242, 112, 32),
+						"old_beta": pygame.Rect(290, 242, 100, 32),
+						"all": pygame.Rect(398, 242, 65, 32),
+					}
+					for name, rect in filter_rects.items():
+						if rect.collidepoint(mouse_pos):
+							VERSION_FILTER = name
+							ApplyVersionFilter()
+							SCROLL_OFFSET = 0
+							break
+					else:
+						if pygame.Rect(50, 284, 415, 225).collidepoint(mouse_pos):
+							index: int = (mouse_pos[1] - 288 + SCROLL_OFFSET) // 29
+							if 0 <= index < len(VISIBLE_VERSIONS):
+								SELECTED_VERSION = VISIBLE_VERSIONS[index]["id"]
+						elif pygame.Rect(525, 445, 280, 48).collidepoint(mouse_pos):
+							if SELECTED_VERSION and not BUSY:
+								selected: dict | None = next(
+									(version for version in VERSIONS if version["id"] == SELECTED_VERSION),
+									None,
 								)
-								StartBackgroundTask(install_function, selected)
-
-					elif pygame.Rect(465, 447, 380, 45).collidepoint(mouse_pos):
-						if not BUSY:
-							StartBackgroundTask(LaunchCurrentInstall)
+								if selected is not None:
+									install_function = InstallFabric if INSTALL_LOADER == "fabric" else InstallVersion
+									StartBackgroundTask(install_function, selected)
 
 		DrawInterface()
 		pygame.display.flip()
