@@ -69,7 +69,7 @@ UPDATE_FILE: pathlib.Path = SCRIPT_PATH.with_suffix(SCRIPT_PATH.suffix + ".new")
 
 GITHUB_OWNER: str = "Nobody0163"
 GITHUB_REPOSITORY: str = "minecraft-launcher"
-LAUNCHER_VERSION: str = "1.3.0"
+LAUNCHER_VERSION: str = "1.3.1"
 GITHUB_RELEASE_API_URL: str = (
 	f"https://api.github.com/repos/{GITHUB_OWNER}/"
 	f"{GITHUB_REPOSITORY}/releases/latest"
@@ -1239,7 +1239,7 @@ def DrawInterface() -> None:
 		DrawInputField(USERNAME_RECT, USERNAME, ACTIVE_FIELD == "username")
 		DrawText("Your username is saved automatically.", 70, 302, SMALL_FONT, MUTED)
 
-		pygame.draw.rect(SCREEN, (23, 28, 37), pygame.Rect(555, 235, 270, 105), border_radius=8)
+		pygame.draw.rect(SCREEN, (23, 28, 37), pygame.Rect(555, 235, 270, 125), border_radius=8)
 		DrawText("SELECTED INSTANCE", 575, 250, SMALL_FONT, MUTED)
 		DrawText(instance["name"][:24] if instance else "None", 575, 275, MEDIUM_FONT)
 		version_label = (instance.get("version_id") or "No version installed")[:30] if instance else ""
