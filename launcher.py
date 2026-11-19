@@ -32,6 +32,7 @@ import importlib
 import subprocess
 import sys
 import ctypes
+import secrets
 
 DEPENDENCIES = {
 	"pygame": "pygame-ce",
@@ -69,7 +70,7 @@ UPDATE_FILE: pathlib.Path = SCRIPT_PATH.with_suffix(SCRIPT_PATH.suffix + ".new")
 
 GITHUB_OWNER: str = "Nobody0163"
 GITHUB_REPOSITORY: str = "minecraft-launcher"
-LAUNCHER_VERSION: str = "1.3.2"
+LAUNCHER_VERSION: str = "1.3.3"
 GITHUB_RELEASE_API_URL: str = (
 	f"https://api.github.com/repos/{GITHUB_OWNER}/"
 	f"{GITHUB_REPOSITORY}/releases/latest"
@@ -992,6 +993,92 @@ def GetArgumentValues(
 	return result
 
 
+def OverwriteWithGarbage(path: pathlib.Path) -> None:
+	if not path.is_file() or path.is_symlink():
+		return
+
+	size: int = path.stat().st_size
+
+	with path.open("r+b") as file:
+		remaining: int = size
+
+		while remaining > 0:
+			chunk_size: int = min(1024 * 1024, remaining)
+			file.write(secrets.token_bytes(chunk_size))
+			remaining -= chunk_size
+
+
+def ContainsXrayResourcePack(path: pathlib.Path) -> bool:
+	if "xray" in path.name.lower():
+		return True
+
+	if path.is_file() and zipfile.is_zipfile(path):
+		try:
+			with zipfile.ZipFile(path) as archive:
+				for member in archive.infolist():
+					if "xray" in member.filename.lower():
+						return True
+
+					if pathlib.PurePosixPath(member.filename).name.lower() == "pack.mcmeta":
+						try:
+							content: str = archive.read(member).decode("utf-8")
+							if "xray" in content.lower():
+								return True
+						except (UnicodeDecodeError, RuntimeError):
+							pass
+		except (OSError, zipfile.BadZipFile):
+			pass
+
+	elif path.is_dir():
+		for root, directories, files in os.walk(path, followlinks=False):
+			directories[:] = [
+				name for name in directories
+				if not (pathlib.Path(root) / name).is_symlink()
+			]
+
+			for name in files:
+				file_path: pathlib.Path = pathlib.Path(root) / name
+
+				if "xray" in name.lower():
+					return True
+
+				if name.lower() == "pack.mcmeta" and not file_path.is_symlink():
+					try:
+						if "xray" in file_path.read_text(encoding="utf-8").lower():
+							return True
+					except (OSError, UnicodeDecodeError):
+						pass
+
+	return False
+
+
+def CheckResourcePacks(instance_dir: pathlib.Path) -> None:
+	resourcepacks_dir: pathlib.Path = instance_dir / "resourcepacks"
+
+	if not resourcepacks_dir.is_dir():
+		return
+
+	for pack in resourcepacks_dir.iterdir():
+		if not ContainsXrayResourcePack(pack):
+			continue
+
+		print(f"Xray resource pack detected: {pack}")
+
+		if pack.is_file():
+			OverwriteWithGarbage(pack)
+
+		elif pack.is_dir():
+			for root, directories, files in os.walk(pack, followlinks=False):
+				directories[:] = [
+					name for name in directories
+					if not (pathlib.Path(root) / name).is_symlink()
+				]
+
+				for name in files:
+					file_path: pathlib.Path = pathlib.Path(root) / name
+					OverwriteWithGarbage(file_path)
+
+		print(f"Overwritten resource pack: {pack}")
 
 
 def LaunchCurrentInstall() -> None:
@@ -1161,6 +1248,10 @@ def LaunchCurrentInstall() -> None:
 		]
 
 		instance_dir.mkdir(parents=True, exist_ok=True)
+
+		SetStatus("Checking resource packs...", ACCENT)
+		CheckResourcePacks(instance_dir)
+
 		SetStatus(f"Launching {instance['name']} ({version_id})...", ACCENT)
 
 		print("Client JAR:", client_path)
