@@ -1695,19 +1695,15 @@ def SetTextFieldValue(field_id: str, value: str) -> None:
 
 def GetClipboardText() -> str:
 	try:
-		if not pygame.scrap.get_init():
-			pygame.scrap.init()
-		content: bytes | None = pygame.scrap.get(pygame.SCRAP_TEXT)
-		return content.decode("utf-8", errors="ignore").rstrip("\\x00") if content else ""
+		content: str | None = pygame.scrap.get_text()
+		return content.rstrip("\x00") if content else ""
 	except pygame.error:
 		return ""
 
 
 def SetClipboardText(value: str) -> None:
 	try:
-		if not pygame.scrap.get_init():
-			pygame.scrap.init()
-		pygame.scrap.put(pygame.SCRAP_TEXT, value.encode("utf-8"))
+		pygame.scrap.put_text(value)
 	except pygame.error:
 		pass
 
