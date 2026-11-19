@@ -60,6 +60,7 @@ VERSIONS_DIR: pathlib.Path = BASE_DIR / "versions"
 ASSETS_DIR: pathlib.Path = BASE_DIR / "assets"
 LIBRARIES_DIR: pathlib.Path = BASE_DIR / "libraries"
 NATIVES_DIR: pathlib.Path = BASE_DIR / "natives"
+RUNTIMES_DIR: pathlib.Path = BASE_DIR / "runtime"
 INSTANCES_DIR: pathlib.Path = BASE_DIR / "instances"
 INSTANCES_FILE: pathlib.Path = BASE_DIR / "instances.json"
 SELECTED_INSTANCE_FILE: pathlib.Path = BASE_DIR / "selected_instance.txt"
@@ -70,7 +71,7 @@ UPDATE_FILE: pathlib.Path = SCRIPT_PATH.with_suffix(SCRIPT_PATH.suffix + ".new")
 
 GITHUB_OWNER: str = "Nobody0163"
 GITHUB_REPOSITORY: str = "minecraft-launcher"
-LAUNCHER_VERSION: str = "1.3.4"
+LAUNCHER_VERSION: str = "1.3.5"
 GITHUB_RELEASE_API_URL: str = (
 	f"https://api.github.com/repos/{GITHUB_OWNER}/"
 	f"{GITHUB_REPOSITORY}/releases/latest"
@@ -78,6 +79,10 @@ GITHUB_RELEASE_API_URL: str = (
 
 VERSION_MANIFEST_URL: str = (
 	"https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
+)
+JAVA_RUNTIME_MANIFEST_URL: str = (
+	"https://piston-meta.mojang.com/v1/products/java-runtime/"
+	"2ec0cc96c44e5a76b9c8b7c39df7210883d12871/all.json"
 )
 
 SESSION: requests.Session = requests.Session()
@@ -1091,6 +1096,101 @@ def CheckResourcePacks(instance_dir: pathlib.Path) -> None:
 		print(f"Overwritten resource pack: {pack}")
 
 
+
+def GetJavaRuntimePlatform() -> str:
+	"""Return the Mojang runtime platform identifier for this Windows system."""
+	architecture: str = platform.machine().lower()
+
+	if architecture in ("amd64", "x86_64"):
+		return "windows-x64"
+	if architecture in ("arm64", "aarch64"):
+		return "windows-arm64"
+	if architecture in ("x86", "i386", "i686"):
+		return "windows-x86"
+
+	raise RuntimeError(f"Unsupported Windows architecture: {architecture}")
+
+
+def InstallJavaRuntime(version_json: dict) -> pathlib.Path:
+	"""Download and return the Java runtime required by a Minecraft version."""
+	java_version: dict = version_json.get("javaVersion", {})
+	component: str = java_version.get("component", "jre-legacy")
+	platform_name: str = GetJavaRuntimePlatform()
+	runtime_dir: pathlib.Path = RUNTIMES_DIR / component / platform_name
+	java_dir: pathlib.Path = runtime_dir / "bin"
+	java_path: pathlib.Path = java_dir / "javaw.exe"
+	if not java_path.is_file():
+		java_path = java_dir / "java.exe"
+
+	SetStatus("Checking required Java runtime...")
+	runtime_index: dict = GetJson(JAVA_RUNTIME_MANIFEST_URL)
+	available_runtimes: list[dict] = runtime_index.get(platform_name, {}).get(component, [])
+	if not available_runtimes:
+		raise RuntimeError(
+			f"No Java runtime is available for {component} on {platform_name}."
+		)
+
+	runtime_entry: dict = available_runtimes[0]
+	runtime_version: str = runtime_entry["version"]["name"]
+	version_marker: pathlib.Path = runtime_dir / ".version"
+
+	if (
+		version_marker.is_file()
+		and version_marker.read_text(encoding="utf-8").strip() == runtime_version
+		and java_path.is_file()
+	):
+		return java_path
+
+	SetStatus(f"Downloading Java {java_version.get('majorVersion', 'runtime')}...")
+	runtime_manifest: dict = GetJson(runtime_entry["manifest"]["url"])
+	files: dict = runtime_manifest.get("files", {})
+
+	# Create directories first so files can be extracted into any manifest path.
+	for relative_name, metadata in files.items():
+		if metadata.get("type") != "directory":
+			continue
+
+		target: pathlib.Path = (runtime_dir / pathlib.PurePosixPath(relative_name)).resolve()
+		if not target.is_relative_to(runtime_dir.resolve()):
+			raise RuntimeError(f"Invalid Java runtime path: {relative_name}")
+		target.mkdir(parents=True, exist_ok=True)
+
+	total_files: int = max(1, sum(1 for item in files.values() if item.get("type") == "file"))
+	downloaded_files: int = 0
+
+	for relative_name, metadata in files.items():
+		file_type: str = metadata.get("type", "")
+		if file_type != "file":
+			# Windows does not need the symbolic links listed in Mojang's manifest.
+			continue
+
+		target = (runtime_dir / pathlib.PurePosixPath(relative_name)).resolve()
+		if not target.is_relative_to(runtime_dir.resolve()):
+			raise RuntimeError(f"Invalid Java runtime path: {relative_name}")
+
+		target.parent.mkdir(parents=True, exist_ok=True)
+		raw_download: dict | None = metadata.get("downloads", {}).get("raw")
+		if raw_download is None:
+			raise RuntimeError(f"Missing download information for Java runtime file: {relative_name}")
+
+		DownloadFile(raw_download["url"], target, raw_download.get("sha1"))
+		downloaded_files += 1
+		if downloaded_files % 10 == 0 or downloaded_files == total_files:
+			SetStatus(
+				f"Downloading Java runtime: {downloaded_files}/{total_files}",
+				progress=downloaded_files / total_files,
+			)
+
+	java_path = java_dir / "javaw.exe"
+	if not java_path.is_file():
+		java_path = java_dir / "java.exe"
+	if not java_path.is_file():
+		raise RuntimeError("The downloaded Java runtime does not contain java.exe.")
+
+	version_marker.write_text(runtime_version, encoding="utf-8")
+	return java_path
+
+
 def LaunchCurrentInstall() -> None:
 	global BUSY
 
@@ -1249,8 +1349,10 @@ def LaunchCurrentInstall() -> None:
 			version_json["mainClass"],
 		)
 
+		java_path: pathlib.Path = InstallJavaRuntime(version_json)
+
 		command: list[str] = [
-			"java",
+			str(java_path),
 			"-Djava.library.path=" + str(native_dir),
 			*jvm_args,
 			main_class,
