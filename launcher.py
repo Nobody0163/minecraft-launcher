@@ -69,7 +69,7 @@ UPDATE_FILE: pathlib.Path = SCRIPT_PATH.with_suffix(SCRIPT_PATH.suffix + ".new")
 
 GITHUB_OWNER: str = "Nobody0163"
 GITHUB_REPOSITORY: str = "minecraft-launcher"
-LAUNCHER_VERSION: str = "1.3.1"
+LAUNCHER_VERSION: str = "1.3.2"
 GITHUB_RELEASE_API_URL: str = (
 	f"https://api.github.com/repos/{GITHUB_OWNER}/"
 	f"{GITHUB_REPOSITORY}/releases/latest"
@@ -1641,4 +1641,12 @@ def Main() -> None:
 
 
 if __name__ == "__main__":
-	Main()
+	try:
+		Main()
+	except Exception as e:
+		ctypes.windll.user32.MessageBoxW(
+			0,
+			str(e),
+			"Fatal Error",
+			0x10
+		)
