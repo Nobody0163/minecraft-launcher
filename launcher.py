@@ -70,7 +70,7 @@ UPDATE_FILE: pathlib.Path = SCRIPT_PATH.with_suffix(SCRIPT_PATH.suffix + ".new")
 
 GITHUB_OWNER: str = "Nobody0163"
 GITHUB_REPOSITORY: str = "minecraft-launcher"
-LAUNCHER_VERSION: str = "1.3.3"
+LAUNCHER_VERSION: str = "1.3.4"
 GITHUB_RELEASE_API_URL: str = (
 	f"https://api.github.com/repos/{GITHUB_OWNER}/"
 	f"{GITHUB_REPOSITORY}/releases/latest"
@@ -173,6 +173,16 @@ def GetSelectedInstance() -> dict | None:
 	if instance is not None:
 		EnsureInstanceOptions(instance)
 	return instance
+
+
+def OpenInstanceFolder(instance_id: str) -> None:
+	instance_dir: pathlib.Path = INSTANCES_DIR / instance_id
+	instance_dir.mkdir(parents=True, exist_ok=True)
+
+	try:
+		os.startfile(instance_dir)
+	except OSError as exception:
+		SetStatus(f"Could not open instance folder: {exception}", ERROR)
 
 
 def LoadInstances() -> None:
@@ -1459,7 +1469,8 @@ def DrawInterface() -> None:
 				pygame.draw.rect(SCREEN, BUTTON, row, border_radius=6)
 			DrawText(instance["name"][:36], 68, row.centery - 8, FONT, TEXT if selected_instance else MUTED, "midleft")
 			DrawText(instance.get("version_id") or "No version installed", 68, row.centery + 11, SMALL_FONT, MUTED, "midleft")
-			DrawText("Selected" if selected_instance else "Select", 800, row.centery, SMALL_FONT, ACCENT if selected_instance else MUTED, "midright")
+			DrawText("Selected" if selected_instance else "Select", 625, row.centery, SMALL_FONT, ACCENT if selected_instance else MUTED, "midright")
+			DrawButton(pygame.Rect(665, y + 5, 145, 32), "Open folder")
 		SCREEN.set_clip(clip_rect)
 		DrawButton(pygame.Rect(650, 493, 175, 36), "Delete selected", len(INSTANCES) > 1 and not BUSY)
 
@@ -1720,8 +1731,15 @@ def Main() -> None:
 					elif pygame.Rect(50, 282, 775, 205).collidepoint(mouse_pos):
 						index = (mouse_pos[1] - 287 + INSTANCE_SCROLL_OFFSET) // 48
 						if 0 <= index < len(INSTANCES):
-							SELECTED_INSTANCE_ID = INSTANCES[index]["id"]
-							SaveInstances()
+							instance: dict = INSTANCES[index]
+							row_y: int = 287 + index * 48 - INSTANCE_SCROLL_OFFSET
+							open_folder_rect: pygame.Rect = pygame.Rect(665, row_y + 5, 145, 32)
+
+							if open_folder_rect.collidepoint(mouse_pos):
+								OpenInstanceFolder(instance["id"])
+							else:
+								SELECTED_INSTANCE_ID = instance["id"]
+								SaveInstances()
 
 
 		DrawInterface()
