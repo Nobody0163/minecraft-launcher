@@ -71,7 +71,7 @@ UPDATE_FILE: pathlib.Path = SCRIPT_PATH.with_suffix(SCRIPT_PATH.suffix + ".new")
 
 GITHUB_OWNER: str = "Nobody0163"
 GITHUB_REPOSITORY: str = "minecraft-launcher"
-LAUNCHER_VERSION: str = "1.3.5"
+LAUNCHER_VERSION: str = "1.3.6"
 GITHUB_RELEASE_API_URL: str = (
 	f"https://api.github.com/repos/{GITHUB_OWNER}/"
 	f"{GITHUB_REPOSITORY}/releases/latest"
@@ -501,23 +501,65 @@ def DrawInputField(
 	value: str,
 	active: bool,
 	placeholder: str = "",
+	field_id: str = "",
 ) -> None:
 	pygame.draw.rect(SCREEN, (21, 25, 33), rect, border_radius=7)
 	pygame.draw.rect(
 		SCREEN,
 		ACCENT if active else (59, 69, 85),
 		rect,
-		width=1,
+		width=1 if not active else 2,
 		border_radius=7,
 	)
-	display = value if value else placeholder
-	color = TEXT if value else MUTED
-	surface = FONT.render(display[:40], True, color)
-	clip = SCREEN.get_clip()
-	SCREEN.set_clip(rect.inflate(-10, -4))
-	SCREEN.blit(surface, surface.get_rect(midleft=(rect.x + 10, rect.centery)))
-	SCREEN.set_clip(clip)
 
+	padding: int = 10
+	text_rect: pygame.Rect = rect.inflate(-padding * 2, -4)
+	clip: pygame.Rect | None = SCREEN.get_clip()
+	SCREEN.set_clip(text_rect)
+
+	if not value:
+		surface: pygame.Surface = FONT.render(placeholder, True, MUTED)
+		SCREEN.blit(surface, surface.get_rect(midleft=(text_rect.x, rect.centery)))
+	elif active:
+		cursor: int = max(0, min(len(value), FIELD_CURSORS.get(field_id, len(value))))
+		anchor: int = max(0, min(len(value), FIELD_ANCHORS.get(field_id, cursor)))
+		FIELD_CURSORS[field_id] = cursor
+		FIELD_ANCHORS[field_id] = anchor
+		start: int = min(cursor, anchor)
+		finish: int = max(cursor, anchor)
+		scroll: int = FIELD_SCROLL.get(field_id, 0)
+
+		cursor_x: int = FONT.size(value[:cursor])[0]
+		max_scroll: int = max(0, FONT.size(value)[0] - text_rect.width + 4)
+		scroll = max(0, min(scroll, max_scroll))
+
+		if cursor_x - scroll > text_rect.width - 4:
+			scroll = min(max_scroll, cursor_x - text_rect.width + 4)
+		elif cursor_x - scroll < 4:
+			scroll = max(0, cursor_x - 4)
+
+		FIELD_SCROLL[field_id] = scroll
+
+		if start != finish:
+			selection_x: int = FONT.size(value[:start])[0] - scroll
+			selection_width: int = FONT.size(value[start:finish])[0]
+			pygame.draw.rect(
+				SCREEN,
+				(55, 105, 145),
+				pygame.Rect(text_rect.x + selection_x, text_rect.y + 2, selection_width, text_rect.height - 4),
+			)
+
+		surface = FONT.render(value, True, TEXT)
+		SCREEN.blit(surface, (text_rect.x - scroll, rect.centery - surface.get_height() // 2))
+
+		caret_x: int = text_rect.x + cursor_x - scroll
+		if pygame.time.get_ticks() % 1000 < 550:
+			pygame.draw.line(SCREEN, TEXT, (caret_x, rect.y + 10), (caret_x, rect.bottom - 10), 2)
+	else:
+		surface = FONT.render(value, True, TEXT)
+		SCREEN.blit(surface, surface.get_rect(midleft=(text_rect.x, rect.centery)))
+
+	SCREEN.set_clip(clip)
 
 def SetStatus(
 	message: str,
@@ -1409,6 +1451,12 @@ def StartBackgroundTask(target, *args) -> None:
 
 def DrawInterface() -> None:
 	SCREEN.fill(BACKGROUND)
+	mouse_pos: tuple[int, int] = pygame.mouse.get_pos()
+	input_rects: list[pygame.Rect] = [USERNAME_RECT, MEMORY_MAX_RECT, MEMORY_MIN_RECT, JVM_ARGS_RECT, RES_W_RECT, RES_H_RECT, INSTANCE_NAME_RECT]
+	if any(rect.collidepoint(mouse_pos) for rect in input_rects):
+		pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_IBEAM)
+	else:
+		pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_ARROW)
 
 	pygame.draw.rect(SCREEN, (23, 28, 37), pygame.Rect(0, 0, WIDTH, 88))
 	pygame.draw.line(SCREEN, (45, 54, 68), (0, 87), (WIDTH, 87), 1)
@@ -1439,7 +1487,7 @@ def DrawInterface() -> None:
 		DrawText("Launch Minecraft", 55, 180, TITLE_FONT)
 		DrawText("Launch the selected Minecraft instance.", 57, 218, FONT, MUTED)
 		DrawText("Username", 70, 250, SMALL_FONT, MUTED)
-		DrawInputField(USERNAME_RECT, USERNAME, ACTIVE_FIELD == "username")
+		DrawInputField(USERNAME_RECT, USERNAME, ACTIVE_FIELD == "username", field_id="username")
 		DrawText("Your username is saved automatically.", 70, 302, SMALL_FONT, MUTED)
 
 		pygame.draw.rect(SCREEN, (23, 28, 37), pygame.Rect(555, 235, 270, 125), border_radius=8)
@@ -1469,18 +1517,18 @@ def DrawInterface() -> None:
 
 		DrawText("Max memory", 55, 230, SMALL_FONT, MUTED)
 		DrawText("Min memory", 255, 230, SMALL_FONT, MUTED)
-		DrawInputField(MEMORY_MAX_RECT, mem_max, ACTIVE_FIELD == "memory_max", "2G")
-		DrawInputField(MEMORY_MIN_RECT, mem_min, ACTIVE_FIELD == "memory_min", "512M")
+		DrawInputField(MEMORY_MAX_RECT, mem_max, ACTIVE_FIELD == "memory_max", "2G", "memory_max")
+		DrawInputField(MEMORY_MIN_RECT, mem_min, ACTIVE_FIELD == "memory_min", "512M", "memory_min")
 		DrawText("Examples: 2G, 4G, 8G   /   512M, 1G", 450, 260, SMALL_FONT, MUTED)
 
 		DrawText("Extra JVM arguments", 55, 320, SMALL_FONT, MUTED)
-		DrawInputField(JVM_ARGS_RECT, jvm, ACTIVE_FIELD == "jvm_args", "-XX:+UseG1GC")
+		DrawInputField(JVM_ARGS_RECT, jvm, ACTIVE_FIELD == "jvm_args", "-XX:+UseG1GC", "jvm_args")
 		DrawText("Optional. Space-separated flags passed to Java.", 55, 390, SMALL_FONT, MUTED)
 
 		DrawText("Resolution (width × height)", 55, 410, SMALL_FONT, MUTED)
-		DrawInputField(RES_W_RECT, res_w, ACTIVE_FIELD == "res_w", "1280")
+		DrawInputField(RES_W_RECT, res_w, ACTIVE_FIELD == "res_w", "1280", "res_w")
 		DrawText("×", 182, 440, FONT, MUTED)
-		DrawInputField(RES_H_RECT, res_h, ACTIVE_FIELD == "res_h", "720")
+		DrawInputField(RES_H_RECT, res_h, ACTIVE_FIELD == "res_h", "720", "res_h")
 
 		DrawText("Options are saved automatically for the selected instance.", 55, 495, SMALL_FONT, MUTED)
 
@@ -1549,10 +1597,13 @@ def DrawInterface() -> None:
 	else:
 		DrawText("Manage instances", 50, 169, TITLE_FONT)
 		DrawText("Each instance has separate worlds, mods and settings.", 52, 205, FONT, MUTED)
-		pygame.draw.rect(SCREEN, (21, 25, 33), INSTANCE_NAME_RECT, border_radius=7)
-		pygame.draw.rect(SCREEN, ACCENT if INSTANCE_NAME_ACTIVE else (59, 69, 85), INSTANCE_NAME_RECT, width=1, border_radius=7)
-		name_surface: pygame.Surface = FONT.render(INSTANCE_NAME_INPUT, True, TEXT)
-		SCREEN.blit(name_surface, name_surface.get_rect(midleft=(INSTANCE_NAME_RECT.x + 12, INSTANCE_NAME_RECT.centery)))
+		DrawInputField(
+			INSTANCE_NAME_RECT,
+			INSTANCE_NAME_INPUT,
+			INSTANCE_NAME_ACTIVE,
+			"New instance",
+			"instance_name",
+		)
 		DrawButton(pygame.Rect(575, 225, 250, 42), "Create instance", not BUSY)
 
 		instance_list_rect: pygame.Rect = pygame.Rect(50, 282, 775, 205)
@@ -1592,6 +1643,198 @@ def DrawInterface() -> None:
 SCROLL_OFFSET: int = 0
 
 
+
+FIELD_CURSORS: dict[str, int] = {}
+FIELD_ANCHORS: dict[str, int] = {}
+FIELD_SCROLL: dict[str, int] = {}
+MOUSE_SELECTING: bool = False
+
+
+def GetTextFieldValue(field_id: str) -> str:
+	if field_id == "username":
+		return USERNAME
+	if field_id == "instance_name":
+		return INSTANCE_NAME_INPUT
+
+	instance: dict | None = GetSelectedInstance()
+	if instance is None:
+		return ""
+
+	key_map: dict[str, str] = {
+		"memory_max": "memory_max",
+		"memory_min": "memory_min",
+		"jvm_args": "jvm_args",
+		"res_w": "resolution_width",
+		"res_h": "resolution_height",
+	}
+	return instance.get(key_map[field_id], "")
+
+
+def SetTextFieldValue(field_id: str, value: str) -> None:
+	global USERNAME, INSTANCE_NAME_INPUT
+
+	if field_id == "username":
+		USERNAME = value[:16]
+		SaveUsername()
+	elif field_id == "instance_name":
+		INSTANCE_NAME_INPUT = value[:32]
+	else:
+		instance: dict | None = GetSelectedInstance()
+		if instance is None:
+			return
+		key_map: dict[str, str] = {
+			"memory_max": "memory_max",
+			"memory_min": "memory_min",
+			"jvm_args": "jvm_args",
+			"res_w": "resolution_width",
+			"res_h": "resolution_height",
+		}
+		instance[key_map[field_id]] = value[:64]
+		SaveInstances()
+
+
+def GetClipboardText() -> str:
+	try:
+		if not pygame.scrap.get_init():
+			pygame.scrap.init()
+		content: bytes | None = pygame.scrap.get(pygame.SCRAP_TEXT)
+		return content.decode("utf-8", errors="ignore").rstrip("\\x00") if content else ""
+	except pygame.error:
+		return ""
+
+
+def SetClipboardText(value: str) -> None:
+	try:
+		if not pygame.scrap.get_init():
+			pygame.scrap.init()
+		pygame.scrap.put(pygame.SCRAP_TEXT, value.encode("utf-8"))
+	except pygame.error:
+		pass
+
+
+def GetWordBoundary(value: str, position: int, direction: int) -> int:
+	if direction < 0:
+		position = max(0, position - 1)
+		while position > 0 and value[position].isspace():
+			position -= 1
+		while position > 0 and (value[position - 1].isalnum() or value[position - 1] == "_"):
+			position -= 1
+		return position
+
+	position = min(len(value), position)
+	while position < len(value) and value[position].isspace():
+		position += 1
+	while position < len(value) and (value[position].isalnum() or value[position] == "_"):
+		position += 1
+	return position
+
+
+def FilterTextInput(field_id: str, value: str) -> str:
+	if field_id == "username":
+		return "".join(c for c in value if c.isascii() and (c.isalnum() or c == "_"))
+	if field_id in ("memory_max", "memory_min"):
+		return "".join(c for c in value if c.isalnum() or c in "MmGgKk")
+	if field_id in ("res_w", "res_h"):
+		return "".join(c for c in value if c.isdigit())
+	return "".join(c for c in value if c.isprintable())
+
+
+def InsertText(field_id: str, inserted: str) -> None:
+	value: str = GetTextFieldValue(field_id)
+	cursor: int = max(0, min(len(value), FIELD_CURSORS.get(field_id, len(value))))
+	anchor: int = max(0, min(len(value), FIELD_ANCHORS.get(field_id, cursor)))
+	start: int = min(cursor, anchor)
+	end: int = max(cursor, anchor)
+	available: int = (16 if field_id == "username" else 32 if field_id == "instance_name" else 64) - (len(value) - (end - start))
+	inserted = FilterTextInput(field_id, inserted)[:max(0, available)]
+	updated: str = value[:start] + inserted + value[end:]
+	SetTextFieldValue(field_id, updated)
+	FIELD_CURSORS[field_id] = start + len(inserted)
+	FIELD_ANCHORS[field_id] = start + len(inserted)
+
+
+def HandleTextKey(event: pygame.event.Event, field_id: str) -> None:
+	value: str = GetTextFieldValue(field_id)
+	cursor: int = max(0, min(len(value), FIELD_CURSORS.get(field_id, len(value))))
+	anchor: int = max(0, min(len(value), FIELD_ANCHORS.get(field_id, cursor)))
+	shift: bool = bool(event.mod & pygame.KMOD_SHIFT)
+	control: bool = bool(event.mod & pygame.KMOD_CTRL)
+
+	if control and event.key == pygame.K_a:
+		FIELD_ANCHORS[field_id] = 0
+		FIELD_CURSORS[field_id] = len(value)
+		return
+	if control and event.key == pygame.K_c:
+		if cursor != anchor:
+			SetClipboardText(value[min(cursor, anchor):max(cursor, anchor)])
+		return
+	if control and event.key == pygame.K_x:
+		if cursor != anchor:
+			SetClipboardText(value[min(cursor, anchor):max(cursor, anchor)])
+			InsertText(field_id, "")
+		return
+	if control and event.key == pygame.K_v:
+		InsertText(field_id, GetClipboardText())
+		return
+
+	if event.key in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_HOME, pygame.K_END):
+		if event.key == pygame.K_HOME:
+			new_cursor: int = 0
+		elif event.key == pygame.K_END:
+			new_cursor = len(value)
+		elif control:
+			new_cursor = GetWordBoundary(value, cursor, -1 if event.key == pygame.K_LEFT else 1)
+		else:
+			new_cursor = max(0, cursor - 1) if event.key == pygame.K_LEFT else min(len(value), cursor + 1)
+
+		FIELD_CURSORS[field_id] = new_cursor
+		if not shift:
+			FIELD_ANCHORS[field_id] = new_cursor
+		return
+
+	if event.key in (pygame.K_BACKSPACE, pygame.K_DELETE):
+		start: int = min(cursor, anchor)
+		end: int = max(cursor, anchor)
+		if start == end:
+			if event.key == pygame.K_BACKSPACE and cursor > 0:
+				start = GetWordBoundary(value, cursor, -1) if control else cursor - 1
+			elif event.key == pygame.K_DELETE and cursor < len(value):
+				end = GetWordBoundary(value, cursor, 1) if control else cursor + 1
+		if start != end:
+			SetTextFieldValue(field_id, value[:start] + value[end:])
+			FIELD_CURSORS[field_id] = start
+			FIELD_ANCHORS[field_id] = start
+		return
+
+	if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_ESCAPE, pygame.K_TAB):
+		global ACTIVE_FIELD, INSTANCE_NAME_ACTIVE
+		ACTIVE_FIELD = ""
+		INSTANCE_NAME_ACTIVE = False
+		pygame.key.stop_text_input()
+
+
+
+def GetCursorFromMouse(field_id: str, rect: pygame.Rect, mouse_x: int) -> int:
+	value: str = GetTextFieldValue(field_id)
+	text_x: int = rect.x + 10
+	target_x: int = mouse_x - text_x + max(0, FIELD_SCROLL.get(field_id, 0))
+	for index in range(len(value)):
+		left: int = FONT.size(value[:index])[0]
+		right: int = FONT.size(value[:index + 1])[0]
+		if target_x < (left + right) / 2:
+			return index
+	return len(value)
+
+
+def ActivateTextField(field_id: str, rect: pygame.Rect, mouse_x: int) -> None:
+	global ACTIVE_FIELD, INSTANCE_NAME_ACTIVE
+	ACTIVE_FIELD = "" if field_id == "instance_name" else field_id
+	INSTANCE_NAME_ACTIVE = field_id == "instance_name"
+	cursor: int = GetCursorFromMouse(field_id, rect, mouse_x)
+	FIELD_CURSORS[field_id] = cursor
+	FIELD_ANCHORS[field_id] = cursor
+	pygame.key.start_text_input()
+
 def Main() -> None:
 	global SHOULD_QUIT
 	global SELECTED_VERSION
@@ -1604,6 +1847,7 @@ def Main() -> None:
 	global CURRENT_TAB
 	global SELECTED_INSTANCE_ID
 	global INSTANCE_NAME_ACTIVE, INSTANCE_NAME_INPUT, INSTANCE_NAME_SELECT_ALL, INSTANCE_SCROLL_OFFSET
+	global MOUSE_SELECTING
 
 	LoadUsername()
 	SaveUsername()
@@ -1633,80 +1877,30 @@ def Main() -> None:
 				SaveInstances()
 
 			elif event.type == pygame.TEXTINPUT:
-				if ACTIVE_FIELD == "username":
-					new_characters: str = "".join(
-						character for character in event.text
-						if character.isascii() and (character.isalnum() or character == "_")
-					)
-					USERNAME = new_characters[:16] if FIELD_SELECT_ALL else (USERNAME + new_characters)[:16]
-					FIELD_SELECT_ALL = False
-					SaveUsername()
-				elif ACTIVE_FIELD in ("memory_max", "memory_min", "jvm_args", "res_w", "res_h"):
-					instance = GetSelectedInstance()
-					if instance is None:
-						continue
-					key_map = {
-						"memory_max": "memory_max",
-						"memory_min": "memory_min",
-						"jvm_args": "jvm_args",
-						"res_w": "resolution_width",
-						"res_h": "resolution_height",
-					}
-					key = key_map[ACTIVE_FIELD]
-					current = instance.get(key, "")
-					allowed = event.text
-					if ACTIVE_FIELD in ("memory_max", "memory_min"):
-						allowed = "".join(c for c in event.text if c.isalnum() or c in "MmGgKk")
-					elif ACTIVE_FIELD in ("res_w", "res_h"):
-						allowed = "".join(c for c in event.text if c.isdigit())
-					else:
-						allowed = "".join(c for c in event.text if c.isprintable())
-					if FIELD_SELECT_ALL:
-						instance[key] = allowed[:64]
-					else:
-						instance[key] = (current + allowed)[:64]
-					FIELD_SELECT_ALL = False
-					SaveInstances()
-				elif INSTANCE_NAME_ACTIVE:
-					new_characters = "".join(character for character in event.text if character.isprintable())
-					INSTANCE_NAME_INPUT = new_characters[:32] if INSTANCE_NAME_SELECT_ALL else (INSTANCE_NAME_INPUT + new_characters)[:32]
-					INSTANCE_NAME_SELECT_ALL = False
+				active_field: str = ACTIVE_FIELD or ("instance_name" if INSTANCE_NAME_ACTIVE else "")
+				if active_field:
+					InsertText(active_field, event.text)
 
 			elif event.type == pygame.KEYDOWN:
-				if ACTIVE_FIELD:
-					if event.key == pygame.K_BACKSPACE:
-						if ACTIVE_FIELD == "username":
-							USERNAME = "" if FIELD_SELECT_ALL else USERNAME[:-1]
-							FIELD_SELECT_ALL = False
-							SaveUsername()
-						elif ACTIVE_FIELD in ("memory_max", "memory_min", "jvm_args", "res_w", "res_h"):
-							instance = GetSelectedInstance()
-							if instance is not None:
-								key_map = {
-									"memory_max": "memory_max",
-									"memory_min": "memory_min",
-									"jvm_args": "jvm_args",
-									"res_w": "resolution_width",
-									"res_h": "resolution_height",
-								}
-								key = key_map[ACTIVE_FIELD]
-								if FIELD_SELECT_ALL:
-									instance[key] = ""
-								else:
-									instance[key] = instance.get(key, "")[:-1]
-								FIELD_SELECT_ALL = False
-								SaveInstances()
-					elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_ESCAPE, pygame.K_TAB):
-						ACTIVE_FIELD = ""
-						FIELD_SELECT_ALL = False
-						pygame.key.stop_text_input()
-				elif INSTANCE_NAME_ACTIVE:
-					if event.key == pygame.K_BACKSPACE:
-						INSTANCE_NAME_INPUT = "" if INSTANCE_NAME_SELECT_ALL else INSTANCE_NAME_INPUT[:-1]
-						INSTANCE_NAME_SELECT_ALL = False
-					elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_ESCAPE):
-						INSTANCE_NAME_ACTIVE = False
-						pygame.key.stop_text_input()
+				active_field = ACTIVE_FIELD or ("instance_name" if INSTANCE_NAME_ACTIVE else "")
+				if active_field:
+					HandleTextKey(event, active_field)
+
+			elif event.type == pygame.MOUSEMOTION and MOUSE_SELECTING:
+				active_field = ACTIVE_FIELD or ("instance_name" if INSTANCE_NAME_ACTIVE else "")
+				if active_field:
+					field_rects: dict[str, pygame.Rect] = {
+						"username": USERNAME_RECT,
+						"memory_max": MEMORY_MAX_RECT,
+						"memory_min": MEMORY_MIN_RECT,
+						"jvm_args": JVM_ARGS_RECT,
+						"res_w": RES_W_RECT,
+						"res_h": RES_H_RECT,
+						"instance_name": INSTANCE_NAME_RECT,
+					}
+					FIELD_CURSORS[active_field] = GetCursorFromMouse(
+						active_field, field_rects[active_field], event.pos[0]
+					)
 
 			elif event.type == pygame.MOUSEWHEEL:
 				mouse_pos: tuple[int, int] = pygame.mouse.get_pos()
@@ -1716,6 +1910,9 @@ def Main() -> None:
 				elif CURRENT_TAB == "instances" and pygame.Rect(50, 282, 775, 205).collidepoint(mouse_pos):
 					max_instance_scroll: int = max(0, len(INSTANCES) * 48 - 205)
 					INSTANCE_SCROLL_OFFSET = max(0, min(max_instance_scroll, INSTANCE_SCROLL_OFFSET - event.y * 48))
+
+			elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+				MOUSE_SELECTING = False
 
 			elif event.type == pygame.MOUSEBUTTONDOWN:
 				if event.button != 1:
@@ -1741,10 +1938,8 @@ def Main() -> None:
 
 				if CURRENT_TAB == "launch":
 					if USERNAME_RECT.collidepoint(mouse_pos):
-						ACTIVE_FIELD = "username"
-						FIELD_SELECT_ALL = True
-						INSTANCE_NAME_ACTIVE = False
-						pygame.key.start_text_input()
+						ActivateTextField("username", USERNAME_RECT, mouse_pos[0])
+						MOUSE_SELECTING = True
 						continue
 
 					ACTIVE_FIELD = ""
@@ -1767,10 +1962,15 @@ def Main() -> None:
 						field_clicked = "res_h"
 
 					if field_clicked:
-						ACTIVE_FIELD = field_clicked
-						FIELD_SELECT_ALL = True
-						INSTANCE_NAME_ACTIVE = False
-						pygame.key.start_text_input()
+						field_rect: pygame.Rect = {
+							"memory_max": MEMORY_MAX_RECT,
+							"memory_min": MEMORY_MIN_RECT,
+							"jvm_args": JVM_ARGS_RECT,
+							"res_w": RES_W_RECT,
+							"res_h": RES_H_RECT,
+						}[field_clicked]
+						ActivateTextField(field_clicked, field_rect, mouse_pos[0])
+						MOUSE_SELECTING = True
 						continue
 
 					ACTIVE_FIELD = ""
@@ -1817,9 +2017,8 @@ def Main() -> None:
 				elif CURRENT_TAB == "instances":
 					ACTIVE_FIELD = ""
 					if INSTANCE_NAME_RECT.collidepoint(mouse_pos):
-						INSTANCE_NAME_ACTIVE = True
-						INSTANCE_NAME_SELECT_ALL = True
-						pygame.key.start_text_input()
+						ActivateTextField("instance_name", INSTANCE_NAME_RECT, mouse_pos[0])
+						MOUSE_SELECTING = True
 						continue
 					INSTANCE_NAME_ACTIVE = False
 					pygame.key.stop_text_input()
