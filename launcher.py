@@ -71,7 +71,7 @@ UPDATE_FILE: pathlib.Path = SCRIPT_PATH.with_suffix(SCRIPT_PATH.suffix + ".new")
 
 GITHUB_OWNER: str = "Nobody0163"
 GITHUB_REPOSITORY: str = "minecraft-launcher"
-LAUNCHER_VERSION: str = "1.3.6"
+LAUNCHER_VERSION: str = "1.3.7"
 GITHUB_RELEASE_API_URL: str = (
 	f"https://api.github.com/repos/{GITHUB_OWNER}/"
 	f"{GITHUB_REPOSITORY}/releases/latest"
@@ -1449,10 +1449,25 @@ def StartBackgroundTask(target, *args) -> None:
 	threading.Thread(target=Run, daemon=True).start()
 
 
+
 def DrawInterface() -> None:
 	SCREEN.fill(BACKGROUND)
 	mouse_pos: tuple[int, int] = pygame.mouse.get_pos()
-	input_rects: list[pygame.Rect] = [USERNAME_RECT, MEMORY_MAX_RECT, MEMORY_MIN_RECT, JVM_ARGS_RECT, RES_W_RECT, RES_H_RECT, INSTANCE_NAME_RECT]
+
+	input_rects: list[pygame.Rect] = []
+	if CURRENT_TAB == "launch":
+		input_rects = [USERNAME_RECT]
+	elif CURRENT_TAB == "options":
+		input_rects = [
+			MEMORY_MAX_RECT,
+			MEMORY_MIN_RECT,
+			JVM_ARGS_RECT,
+			RES_W_RECT,
+			RES_H_RECT,
+		]
+	elif CURRENT_TAB == "instances":
+		input_rects = [INSTANCE_NAME_RECT]
+
 	if any(rect.collidepoint(mouse_pos) for rect in input_rects):
 		pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_IBEAM)
 	else:
