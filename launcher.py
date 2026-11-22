@@ -71,7 +71,7 @@ UPDATE_FILE: pathlib.Path = SCRIPT_PATH.with_suffix(SCRIPT_PATH.suffix + ".new")
 
 GITHUB_OWNER: str = "Nobody0163"
 GITHUB_REPOSITORY: str = "minecraft-launcher"
-LAUNCHER_VERSION: str = "1.3.7"
+LAUNCHER_VERSION: str = "1.3.8"
 GITHUB_RELEASE_API_URL: str = (
 	f"https://api.github.com/repos/{GITHUB_OWNER}/"
 	f"{GITHUB_REPOSITORY}/releases/latest"
@@ -131,6 +131,9 @@ INSTANCE_NAME_ACTIVE: bool = False
 INSTANCE_NAME_SELECT_ALL: bool = False
 INSTANCE_NAME_RECT: pygame.Rect = pygame.Rect(55, 225, 500, 42)
 INSTANCE_SCROLL_OFFSET: int = 0
+
+MOD_INSTALLED_SCROLL: int = 0
+MOD_INSTALLED_RECT: pygame.Rect = pygame.Rect(50, 282, 775, 225)
 
 ACTIVE_FIELD: str = ""
 FIELD_SELECT_ALL: bool = False
@@ -625,6 +628,39 @@ def GetJson(url: str) -> dict | list:
 	response: requests.Response = SESSION.get(url, timeout=30)
 	response.raise_for_status()
 	return response.json()
+
+
+def GetInstanceModsDirectory() -> pathlib.Path | None:
+	instance: dict | None = GetSelectedInstance()
+	if instance is None:
+		return None
+	return INSTANCES_DIR / instance["id"] / "mods"
+
+
+def GetInstalledMods() -> list[pathlib.Path]:
+	mods_dir: pathlib.Path | None = GetInstanceModsDirectory()
+	if mods_dir is None:
+		return []
+	mods_dir.mkdir(parents=True, exist_ok=True)
+	return sorted(
+		[
+			path for path in mods_dir.iterdir()
+			if path.is_file() and (path.name.lower().endswith(".jar") or path.name.lower().endswith(".jar.disabled"))
+			and not path.is_symlink()
+		],
+		key=lambda path: path.name.lower(),
+	)
+
+
+def ToggleMod(path: pathlib.Path) -> None:
+	if path.suffix.lower() == ".disabled":
+		target: pathlib.Path = path.with_suffix("")
+	else:
+		target = path.with_suffix(path.suffix + ".disabled")
+	if target.exists():
+		raise FileExistsError(f"A file named {target.name} already exists.")
+	path.rename(target)
+	SetStatus(f"{'Enabled' if target.suffix.lower() != '.disabled' else 'Disabled'} {path.stem}.", ACCENT)
 
 
 def LoadVersions() -> None:
@@ -1160,9 +1196,9 @@ def InstallJavaRuntime(version_json: dict) -> pathlib.Path:
 	platform_name: str = GetJavaRuntimePlatform()
 	runtime_dir: pathlib.Path = RUNTIMES_DIR / component / platform_name
 	java_dir: pathlib.Path = runtime_dir / "bin"
-	java_path: pathlib.Path = java_dir / "javaw.exe"
+	java_path: pathlib.Path = java_dir / "java.exe"
 	if not java_path.is_file():
-		java_path = java_dir / "java.exe"
+		java_path = java_dir / "javaw.exe"
 
 	SetStatus("Checking required Java runtime...")
 	runtime_index: dict = GetJson(JAVA_RUNTIME_MANIFEST_URL)
@@ -1223,9 +1259,9 @@ def InstallJavaRuntime(version_json: dict) -> pathlib.Path:
 				progress=downloaded_files / total_files,
 			)
 
-	java_path = java_dir / "javaw.exe"
+	java_path = java_dir / "java.exe"
 	if not java_path.is_file():
-		java_path = java_dir / "java.exe"
+		java_path = java_dir / "javaw.exe"
 	if not java_path.is_file():
 		raise RuntimeError("The downloaded Java runtime does not contain java.exe.")
 
@@ -1485,6 +1521,7 @@ def DrawInterface() -> None:
 		"install": pygame.Rect(160, 103, 130, 42),
 		"instances": pygame.Rect(295, 103, 130, 42),
 		"options": pygame.Rect(430, 103, 130, 42),
+		"mods": pygame.Rect(565, 103, 130, 42),
 	}
 	for tab_name, rect in tab_rects.items():
 		selected: bool = CURRENT_TAB == tab_name
@@ -1608,6 +1645,34 @@ def DrawInterface() -> None:
 			DrawText("Normal" if loader_name == "vanilla" else "Fabric", *rect.center, FONT, TEXT if selected_loader else MUTED, "center")
 		DrawText("Files are shared between instances.", 525, 397, SMALL_FONT, MUTED)
 		DrawButton(pygame.Rect(525, 445, 280, 48), "Install selected version", bool(SELECTED_VERSION) and not BUSY)
+
+	elif CURRENT_TAB == "mods":
+		instance: dict | None = GetSelectedInstance()
+		DrawText("Mods", 50, 169, TITLE_FONT)
+		instance_label: str = instance["name"] if instance else "No instance selected"
+		DrawText(f"Instance: {instance_label}", 52, 205, FONT, MUTED)
+		DrawText("Installed mods", 55, 263, SMALL_FONT, MUTED)
+		pygame.draw.rect(SCREEN, (21, 25, 33), MOD_INSTALLED_RECT, border_radius=7)
+
+		installed_mods: list[pathlib.Path] = GetInstalledMods()
+		clip_rect = SCREEN.get_clip()
+		SCREEN.set_clip(MOD_INSTALLED_RECT)
+		for index, mod_path in enumerate(installed_mods):
+			y: int = MOD_INSTALLED_RECT.y + 5 + index * 43 - MOD_INSTALLED_SCROLL
+			if y + 38 < MOD_INSTALLED_RECT.top or y > MOD_INSTALLED_RECT.bottom:
+				continue
+			row: pygame.Rect = pygame.Rect(55, y, 765, 38)
+			is_disabled: bool = mod_path.name.lower().endswith(".jar.disabled")
+			mod_name: str = mod_path.name.removesuffix(".disabled")
+			DrawText(mod_name[:75], 63, row.centery - 7, SMALL_FONT, MUTED if is_disabled else TEXT, "midleft")
+			DrawText("Disabled" if is_disabled else "Enabled", 63, row.centery + 9, SMALL_FONT, MUTED, "midleft")
+			DrawButton(pygame.Rect(745, y + 3, 70, 31), "Enable" if is_disabled else "Disable")
+		SCREEN.set_clip(clip_rect)
+
+		if not instance:
+			DrawText("Create or select an instance to manage its mods.", 55, 515, SMALL_FONT, MUTED)
+		elif not installed_mods:
+			DrawText("No mods found in this instance's mods folder.", 55, 515, SMALL_FONT, MUTED)
 
 	else:
 		DrawText("Manage instances", 50, 169, TITLE_FONT)
@@ -1859,6 +1924,7 @@ def Main() -> None:
 	global SELECTED_INSTANCE_ID
 	global INSTANCE_NAME_ACTIVE, INSTANCE_NAME_INPUT, INSTANCE_NAME_SELECT_ALL, INSTANCE_SCROLL_OFFSET
 	global MOUSE_SELECTING
+	global MOD_INSTALLED_SCROLL
 
 	LoadUsername()
 	SaveUsername()
@@ -1921,6 +1987,9 @@ def Main() -> None:
 				elif CURRENT_TAB == "instances" and pygame.Rect(50, 282, 775, 205).collidepoint(mouse_pos):
 					max_instance_scroll: int = max(0, len(INSTANCES) * 48 - 205)
 					INSTANCE_SCROLL_OFFSET = max(0, min(max_instance_scroll, INSTANCE_SCROLL_OFFSET - event.y * 48))
+				elif CURRENT_TAB == "mods" and MOD_INSTALLED_RECT.collidepoint(mouse_pos):
+					max_mod_scroll: int = max(0, len(GetInstalledMods()) * 43 - MOD_INSTALLED_RECT.height)
+					MOD_INSTALLED_SCROLL = max(0, min(max_mod_scroll, MOD_INSTALLED_SCROLL - event.y * 43))
 
 			elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
 				MOUSE_SELECTING = False
@@ -1935,6 +2004,7 @@ def Main() -> None:
 					"install": pygame.Rect(160, 103, 130, 42),
 					"instances": pygame.Rect(295, 103, 130, 42),
 					"options": pygame.Rect(430, 103, 130, 42),
+					"mods": pygame.Rect(565, 103, 130, 42),
 				}
 				clicked_tab: str | None = next(
 					(name for name, rect in tab_rects.items() if rect.collidepoint(mouse_pos)),
@@ -2052,6 +2122,22 @@ def Main() -> None:
 							else:
 								SELECTED_INSTANCE_ID = instance["id"]
 								SaveInstances()
+
+				elif CURRENT_TAB == "mods":
+					ACTIVE_FIELD = ""
+					INSTANCE_NAME_ACTIVE = False
+					pygame.key.stop_text_input()
+					if MOD_INSTALLED_RECT.collidepoint(mouse_pos):
+						index: int = (mouse_pos[1] - MOD_INSTALLED_RECT.y - 5 + MOD_INSTALLED_SCROLL) // 43
+						installed_mods: list[pathlib.Path] = GetInstalledMods()
+						if 0 <= index < len(installed_mods):
+							mod_path: pathlib.Path = installed_mods[index]
+							row_y: int = MOD_INSTALLED_RECT.y + 5 + index * 43 - MOD_INSTALLED_SCROLL
+							if pygame.Rect(745, row_y + 3, 70, 31).collidepoint(mouse_pos):
+								try:
+									ToggleMod(mod_path)
+								except Exception as exception:
+									SetStatus(f"Could not change mod state: {exception}", ERROR)
 
 
 		DrawInterface()
